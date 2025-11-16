@@ -1,0 +1,461 @@
+substitutions:
+  devicename: water_level_sensor
+  friendly_name: "WaterLevel"
+  sensor_update_sec: "5.0"   # Measurement interval in seconds
+
+esphome:
+  name: ${devicename}
+  comment: "Well water level with TL-136 (4–20 mA, 0–5 m), ESP8266 D1 Mini, relay, deep sleep"
+  on_boot:
+    priority: -100
+    then:
+      # Allow or prevent deep sleep based on HA switch state
+      - if:
+          condition:
+            switch.is_on: deep_sleep_disable
+          then:
+            - deep_sleep.prevent: main_deep_sleep
+          else:
+            - deep_sleep.allow: main_deep_sleep
+
+  on_shutdown:
+    then:
+      # Before sleeping switch relay OFF (unpower sensor safely)
+      - switch.turn_off: sensor_power
+
+esp8266:
+  board: d1_mini
+
+logger:
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "${friendly_name} Fallback"
+    password: "fallback1234"  # Optional: move to !secret fallback_ap_password
+
+captive_portal:
+
+api:
+ota:
+
+deep_sleep:
+  id: main_deep_sleep
+  run_duration: 30s      # Active (measurement & filtering phase)
+  sleep_duration: 10min  # Then enter deep sleep
+
+# ============================================================
+# RELAY: Switch sensor 24 V supply
+# ============================================================
+
+output:
+  - platform: gpio
+    pin: D5              # D5 (GPIO14) -> relay IN
+    id: sensor_power_out
+    inverted: true       # Many relay boards: LOW = on, HIGH = off
+
+switch:
+  # Relay powering the sensor
+  - platform: output
+    name: "${friendly_name} Sensor Power"
+    id: sensor_power
+    output: sensor_power_out
+    restore_mode: ALWAYS_ON     # After every boot / wake sensor ON immediately
+    entity_category: config
+
+  # Disable deep sleep via HA (for OTA, debugging)
+  - platform: template
+    name: "${friendly_name} Disable Deep Sleep"
+    id: deep_sleep_disable
+    icon: "mdi:power-sleep"
+    entity_category: config
+    optimistic: true
+    restore_state: true
+    turn_on_action:
+      - deep_sleep.prevent: main_deep_sleep
+    turn_off_action:
+      - deep_sleep.allow: main_deep_sleep
+
+# ============================================================
+# 1) CONFIGURATION VALUES (adjustable via Home Assistant)
+# ============================================================
+
+number:
+  # Distance ground surface to well head (positive if well head above ground)
+  - platform: template
+    name: "CFG Ground to Well Head"
+    id: cfg_ground_to_wellhead
+    unit_of_measurement: "m"
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_value: 0.0
+    min_value: -5.0
+    max_value: 5.0
+    step: 0.01
+
+  # Distance well head to sensor position
+  - platform: template
+    name: "CFG Well Head to Sensor"
+    id: cfg_head_to_sensor
+    unit_of_measurement: "m"
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_value: 5.0
+    min_value: 0.0
+    max_value: 20.0
+    step: 0.01
+
+  # Distance well head to pump 1
+  - platform: template
+    name: "CFG Well Head to Pump 1"
+    id: cfg_head_to_pump1
+    unit_of_measurement: "m"
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_value: 5.0
+    min_value: 0.0
+    max_value: 50.0
+    step: 0.01
+
+  # Distance well head to pump 2
+  - platform: template
+    name: "CFG Well Head to Pump 2"
+    id: cfg_head_to_pump2
+    unit_of_measurement: "m"
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_value: 5.5
+    min_value: 0.0
+    max_value: 50.0
+    step: 0.01
+
+  # Total well depth from head (informational currently)
+  - platform: template
+    name: "CFG Well Depth from Head"
+    id: cfg_head_to_bottom
+    unit_of_measurement: "m"
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_value: 6.0
+    min_value: 0.0
+    max_value: 50.0
+    step: 0.01
+
+  # Filter window for exponential moving average (seconds)
+  - platform: template
+    name: "CFG Filter Window Sensor Signal"
+    id: cfg_filter_window_s
+    unit_of_measurement: "s"
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_value: 60.0
+    min_value: 5.0
+    max_value: 600.0
+    step: 5.0
+
+  # Calibration point 1: loop current (mA)
+  - platform: template
+    name: "CFG Calibration Point 1 Current"
+    id: cfg_cal1_current_mA
+    unit_of_measurement: "mA"
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_value: 4.0
+    min_value: 0.0
+    max_value: 30.0
+    step: 0.01
+
+  # Calibration point 1: depth from well head (m)
+  - platform: template
+    name: "CFG Calibration Point 1 Depth"
+    id: cfg_cal1_depth_m
+    unit_of_measurement: "m"
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_value: 5.0
+    min_value: 0.0
+    max_value: 50.0
+    step: 0.01
+
+  # Calibration point 2: loop current (mA)
+  - platform: template
+    name: "CFG Calibration Point 2 Current"
+    id: cfg_cal2_current_mA
+    unit_of_measurement: "mA"
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_value: 20.0
+    min_value: 0.0
+    max_value: 30.0
+    step: 0.01
+
+  # Calibration point 2: depth from well head (m)
+  - platform: template
+    name: "CFG Calibration Point 2 Depth"
+    id: cfg_cal2_depth_m
+    unit_of_measurement: "m"
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_value: 1.0
+    min_value: 0.0
+    max_value: 50.0
+    step: 0.01
+
+  # Shunt resistance value (Ohms)
+  - platform: template
+    name: "CFG Shunt Resistance"
+    id: cfg_shunt_resistance_ohm
+    unit_of_measurement: "Ω"
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_value: 150.0
+    min_value: 50.0
+    max_value: 500.0
+    step: 1.0
+
+# ============================================================
+# 2) SENSING & CALCULATIONS
+# ============================================================
+
+sensor:
+  # 2.1 Raw ADC at A0 (internal 0..1 V range)
+  - platform: adc
+    pin: A0
+    id: shunt_adc_raw
+    name: "${friendly_name} ADC Internal"
+    unit_of_measurement: "V"
+    accuracy_decimals: 3
+    update_interval: ${sensor_update_sec}s
+    entity_category: diagnostic
+
+  # 2.2 Actual shunt voltage (0..~3.2 V at A0 on D1 mini)
+  - platform: template
+    id: shunt_voltage
+    name: "${friendly_name} Shunt Voltage Raw"
+    unit_of_measurement: "V"
+    accuracy_decimals: 3
+    update_interval: ${sensor_update_sec}s
+    entity_category: diagnostic
+    lambda: |-
+      float u_adc = id(shunt_adc_raw).state;
+      if (isnan(u_adc)) return NAN;
+      // D1 mini: ADC 0..1 V corresponds to ~0..3.2 V at A0
+      return u_adc * 3.2f;
+
+  # 2.3 Raw loop current (mA) from shunt voltage
+  - platform: template
+    id: loop_current_raw
+    name: "${friendly_name} Loop Current Raw"
+    unit_of_measurement: "mA"
+    accuracy_decimals: 3
+    update_interval: ${sensor_update_sec}s
+    entity_category: diagnostic
+    lambda: |-
+      if (!id(sensor_power).state) {
+        return NAN;  // Sensor off
+      }
+      float u = id(shunt_voltage).state;            // Volts
+      float r = id(cfg_shunt_resistance_ohm).state; // Ohms
+      if (isnan(u) || isnan(r) || r < 1.0f) {
+        return NAN;
+      }
+      float i_mA = (u / r) * 1000.0f;
+      return i_mA;
+
+  # 2.4 Filtered loop current with warmup phase
+  - platform: template
+    id: loop_current_filtered
+    name: "${friendly_name} Loop Current Filtered"
+    unit_of_measurement: "mA"
+    accuracy_decimals: 3
+    update_interval: ${sensor_update_sec}s
+    entity_category: diagnostic
+    lambda: |-
+      if (!id(sensor_power).state) {
+        return NAN;
+      }
+
+      float raw = id(loop_current_raw).state;
+      if (isnan(raw)) {
+        return NAN;
+      }
+
+      float window_s = id(cfg_filter_window_s).state;
+      if (isnan(window_s) || window_s < 1.0f) {
+        window_s = 1.0f;
+      }
+
+      const float dt = ${sensor_update_sec};
+      float alpha = dt / window_s;
+      if (alpha > 1.0f) alpha = 1.0f;
+
+      static float avg = NAN;
+      static int warmup_count = 0;
+      const int WARMUP_SAMPLES = 3;  // Number of cycles for warmup
+
+      if (isnan(avg)) {
+        avg = raw;              // Initialization
+      } else {
+        avg = avg + alpha * (raw - avg);
+      }
+
+      warmup_count++;
+
+      // Suppress output during warmup phase
+      if (warmup_count <= WARMUP_SAMPLES) {
+        return NAN;
+      }
+
+      return avg;
+
+  # 2.5 Filtered sensor column (0..5 m above sensor) – diagnostic only
+  - platform: template
+    id: sensor_column_filtered_m
+    name: "${friendly_name} Filtered Sensor Column (0-5 m above sensor)"
+    unit_of_measurement: "m"
+    accuracy_decimals: 3
+    icon: "mdi:waves"
+    update_interval: ${sensor_update_sec}s
+    entity_category: diagnostic
+    lambda: |-
+      if (!id(sensor_power).state) return NAN;
+
+      const float I_MIN = 4.0f;
+      const float I_MAX = 20.0f;
+      const float RANGE_M = 5.0f;
+
+      float i_mA = id(loop_current_filtered).state;
+      if (isnan(i_mA)) return NAN;
+      if (i_mA < 0.5f || i_mA > 25.0f) return NAN;
+
+      float level = (i_mA - I_MIN) / (I_MAX - I_MIN) * RANGE_M;
+      if (level < 0.0f) level = 0.0f;
+      if (level > RANGE_M) level = RANGE_M;
+      return level;
+
+  # 2.6 Calibrated water depth from well head (m)
+  - platform: template
+    id: water_depth_from_head
+    name: "${friendly_name} Water Level from Well Head"
+    unit_of_measurement: "m"
+    accuracy_decimals: 3
+    icon: "mdi:waves"
+    update_interval: ${sensor_update_sec}s
+    lambda: |-
+      if (!id(sensor_power).state) return NAN;
+
+      float i = id(loop_current_filtered).state;
+      if (isnan(i)) return NAN;
+
+      float i1 = id(cfg_cal1_current_mA).state;
+      float i2 = id(cfg_cal2_current_mA).state;
+      float d1 = id(cfg_cal1_depth_m).state;
+      float d2 = id(cfg_cal2_depth_m).state;
+
+      bool calib_valid = true;
+      if (isnan(i1) || isnan(i2) || isnan(d1) || isnan(d2)) calib_valid = false;
+      if (fabs(i2 - i1) < 0.1f) calib_valid = false;
+      if (fabs(d2 - d1) < 0.01f) calib_valid = false;
+
+      float depth_from_head;
+
+      if (calib_valid) {
+        float t = (i - i1) / (i2 - i1);
+        depth_from_head = d1 + t * (d2 - d1);
+      } else {
+        // Fallback: theoretical sensor curve (0-5 m column above sensor)
+        float h_over_sensor = id(sensor_column_filtered_m).state;
+        if (isnan(h_over_sensor)) return NAN;
+        float d_sensor = id(cfg_head_to_sensor).state;
+        depth_from_head = d_sensor - h_over_sensor;
+      }
+
+      return depth_from_head;
+
+  # 2.7 Water depth from ground surface (m)
+  - platform: template
+    id: water_depth_from_ground
+    name: "${friendly_name} Water Level from Ground"
+    unit_of_measurement: "m"
+    accuracy_decimals: 3
+    icon: "mdi:waves-arrow-up"
+    update_interval: ${sensor_update_sec}s
+    lambda: |-
+      float depth_head = id(water_depth_from_head).state;       // m below well head
+      float ground_to_head = id(cfg_ground_to_wellhead).state;  // m (ground -> well head)
+
+      if (isnan(depth_head) || isnan(ground_to_head)) {
+        return NAN;
+      }
+
+      // Depth below ground surface
+      float depth_from_ground = depth_head - ground_to_head;
+      return depth_from_ground;
+
+  # 2.8 Water height above pump 1 (m), positive = pump submerged
+  - platform: template
+    id: water_over_pump1
+    name: "${friendly_name} Water Height Above Pump 1"
+    unit_of_measurement: "m"
+    accuracy_decimals: 3
+    icon: "mdi:pump"
+    update_interval: ${sensor_update_sec}s
+    lambda: |-
+      float depth_head = id(water_depth_from_head).state;
+      float d_pump1 = id(cfg_head_to_pump1).state;
+      if (isnan(depth_head) || isnan(d_pump1)) return NAN;
+
+      float height_over_pump = d_pump1 - depth_head;
+      return height_over_pump;
+
+  # 2.9 Water height above pump 2 (m)
+  - platform: template
+    id: water_over_pump2
+    name: "${friendly_name} Water Height Above Pump 2"
+    unit_of_measurement: "m"
+    accuracy_decimals: 3
+    icon: "mdi:pump"
+    update_interval: ${sensor_update_sec}s
+    lambda: |-
+      float depth_head = id(water_depth_from_head).state;
+      float d_pump2 = id(cfg_head_to_pump2).state;
+      if (isnan(depth_head) || isnan(d_pump2)) return NAN;
+
+      float height_over_pump = d_pump2 - depth_head;
+      return height_over_pump;
+
+# ============================================================
+# 3) ERROR STATUS
+# ============================================================
+
+binary_sensor:
+  - platform: template
+    id: water_sensor_error
+    name: "${friendly_name} Sensor Error"
+    device_class: problem
+    entity_category: diagnostic
+    lambda: |-
+      if (!id(sensor_power).state) {
+        // Sensor intentionally OFF → no error
+        return false;
+      }
+      float u = id(shunt_voltage).state;
+      if (isnan(u) || u < 0.05f || u > 3.2f) {
+        return true;
+      }
+      return false;
+    filters:
+      - delayed_on: 10s
+      - delayed_off: 10s
