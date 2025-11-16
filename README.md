@@ -41,36 +41,32 @@ Core parts
 - Shunt: 150 Ω (≥0.25 W) in return path (loop current → voltage)
 - Power: 24 V (sensor) and 5 V (ESP + relay)
 
-Quick wiring
-- Forward: `+24V → Relay COM → Relay NO → Cable 1 → Sensor (+)`
-- Return: `Sensor (–) → Cable 2 → measurement point → 150 Ω shunt → 24V‑GND`
-- D1 mini: `A0 → measurement point`, `GND → 24V‑GND`, `D5(GPIO14) → Relay IN`, `5V → Relay VCC`, `GND → Relay GND`
+High‑side switching (DEFAULT)
+- Relay disconnects the 5 V feed going into the 24 V boost converter (or directly the +24 V sensor line if using a fixed 24 V supply).
+- Result: when off, the converter + sensor draw virtually zero current; ADC reference remains solid because grounds stay tied.
+- Recommended for stability and clean measurements.
 
-Recommended add‑ons
-- 1–2 kΩ series resistor between measurement point and A0 (input protection)
-- 100 nF–1 µF capacitor from measurement point to GND (analog low‑pass)
-
-Two wiring options (choose one)
-- Low‑side switching (DEFAULT in this guide): the relay switches the 24 V “−/GND”.
-	- Pros: lets you open the DC‑DC ground so the 24 V converter and sensor draw essentially zero idle power when not measuring; reduces standby consumption.
-	- Cons: when the relay is open the measurement node floats; requires a pulldown and input protection to keep the ADC stable.
-- High‑side switching (previous design): the relay switches `+24 V` to the sensor.
-	- Pros: ADC node stays referenced to GND at all times; simplest to measure and debug; very stable.
-	- Cons: the 24 V converter remains grounded and may draw small idle current even when the sensor is off.
-
-Low‑side implementation details (default)
-- Add a 470 kΩ–1 MΩ pulldown from the measurement node (relay COM / shunt top) to MCU GND.
-- Keep the 1–2 kΩ series resistor to A0 and a 100 nF–1 µF capacitor from the node to GND.
-- Ensure the 24 V supply `Vin−` and `Vout−` are common; MCU GND ties to that common when the relay closes.
-
-Quick wiring (low‑side)
+Quick wiring (high‑side 5 V feed)
 ```text
-Relay NO ("ON") → MCU GND
-Relay COM → measurement node → shunt (150 Ω) → 24V Vin− (common with Vout−)
-Relay COM → A0 via 1–2 kΩ; node → 100 nF–1 µF → GND; node → 470 kΩ–1 MΩ → GND
-24V Vin+ ← +5 V input (DC‑DC); 24V Vout+ → Sensor (+) via Cable 1
-Sensor (−) via Cable 2 → measurement node
+5V supply → Relay COM → Relay NO → Boost Vin+ → Boost 24V+ → Sensor (+)
+Sensor (−) → Shunt (150 Ω) → 24V GND → MCU GND
+A0 ← measurement point (top of shunt) through mandatory 1 kΩ series resistor
+Relay module: IN ← D5 (GPIO14), VCC ← 5V supply, GND ← MCU GND
+Optional: 100 nF–1 µF from measurement point to GND (analog low‑pass)
 ```
+
+Series protection & filtering (now mandatory)
+- 1 kΩ series resistor before A0 (overvoltage & transient protection)
+- 100 nF–1 µF capacitor measurement point → GND (noise reduction)
+
+Alternative wiring (low‑side switching)
+- Relay opens the negative/ground path of the boost converter.
+- Pros: eliminates even the boost converter’s quiescent draw.
+- Cons: floating measurement node when open → requires pulldown + filtering, slightly higher risk of noise.
+
+Low‑side additional parts
+- Add 470 kΩ–1 MΩ pulldown from measurement node to MCU GND.
+- Keep the same 1 kΩ series resistor and 100 nF–1 µF capacitor.
 
 Full diagrams are in [ASCII Wiring Diagrams](#ascii-wiring-diagrams).
 
@@ -158,43 +154,41 @@ Filtering, calibration, and error logic are implemented via template sensors in 
 
 ### ASCII Wiring Diagrams
 
-Low‑side wiring (default)
+High‑side wiring (default — switching 5 V feed to boost)
 ```
-										HOUSE / BASEMENT
+							HOUSE / BASEMENT
 					┌─────────────────────────────────────┐
 					│                                     │
-					│       DC‑DC 24 V BOOST (from 5 V)   │
-					│                                     │
-					│  Vin+  ◄───────────────  +5 V       │
-					│  Vin−  ─────────────┐               │
-					│  Vout+ ────────┐    │               │
-					│  Vout− ─────┐  │    │  (Vin− tied to Vout−) 
-					│             │  │    │
-					│             │  │    └───┐
-					│             │  │        │
-					│             │  │     ┌──┴───┐   RELAY MODULE (1‑ch, 5 V)
-					│             │  │     │ COM  │───── measurement node ──┬───── A0 (via 1–2 kΩ)
-					│             │  │     │      │                         │
-					│             │  │     │ NO   │───── MCU GND             │
-					│             │  │     └──────┘                         │
-					│             │  │                                       │
-					│             │  └───[ 150 Ω shunt ]─── to 24V Vout−/Vin−┘
-					│             │
-					│      +24V ──┴────────────── Cable 1 ─────► Sensor (+)  │
-					│                                     │                  │
-					│  Cable 2 ◄────────────── Sensor (−) ◄──────────────────┘
-					│
-					│ Measurement node: add 470 kΩ–1 MΩ → GND and 100 nF–1 µF → GND
-					│
-					│          D1 MINI (ESP8266)          │
-					│      5V_in  ◄── 5V supply / USB     │
-					│      GND    ────────────────┐
-					│      D5 (GPIO14) ─────► Relay IN    │
-					│      5V          ─────► Relay VCC   │
-					│      GND         ─────► Relay GND   │
+					│  5V SUPPLY / USB                    │
+					│      +5V ───┐                       │
+					│             │                       │
+					│         ┌───┴───────┐               │
+					│         │  RELAY    │ (1‑ch, 5 V)   │
+					│         │  COM      │               │
+					│         │           │               │
+					│         │  NO ────────────► Boost Vin+ ───► 24V+ ─── Cable 1 ───► Sensor (+)
+					│         └───────────┘               │
+					│             │                       │
+					│            GND ─────────────────────┬───────────────┐
+					│                                     │               │
+					│                             150 Ω shunt             │
+					│                        (≥0.25 W)  ┌───────┐         │
+					│                                   │       │         │
+					│  Sensor (−) ── Cable 2 ───────────┘       │         │
+					│                                           ▼         │
+					│                                Measurement node     │
+					│                                | | 1 kΩ series → A0 │
+					│                                | | 100 nF–1 µF → GND│
+					│                                                GND  │
+					│          D1 MINI (ESP8266)                       │  │
+					│      5V_in  ◄─────────────── (same +5V)          │  │
+					│      GND    ─────────────────────────────────────┘  │
+					│      D5 (GPIO14) ─────► Relay IN                      │
+					│      5V          ─────► Relay VCC                     │
+					│      GND         ─────► Relay GND                     │
 					└─────────────────────────────────────┘
 
-										WELL SHAFT
+							WELL SHAFT
 					┌─────────────────────────────────────┐
 					│        TL‑136 LEVEL SENSOR          │
 					│      (+)  ◄────────── Cable 1       │
@@ -203,7 +197,7 @@ Low‑side wiring (default)
 ```
 
 <details>
-<summary>High‑side wiring (previous design) — click to expand</summary>
+<summary>Low‑side wiring (alternative) — click to expand</summary>
 
 ```
 										HOUSE / BASEMENT

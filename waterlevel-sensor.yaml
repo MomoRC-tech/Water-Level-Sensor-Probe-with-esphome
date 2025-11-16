@@ -49,7 +49,7 @@ deep_sleep:
   sleep_duration: 10min  # Then enter deep sleep
 
 # ============================================================
-# RELAY: Switch sensor 24 V supply
+# RELAY: High-side switch of 5 V feed to 24 V boost (controls sensor power)
 # ============================================================
 
 output:
@@ -242,6 +242,7 @@ sensor:
     accuracy_decimals: 3
     update_interval: ${sensor_update_sec}s
     entity_category: diagnostic
+    # External hardware: mandatory 1 kΩ series resistor + optional RC filter for protection
 
   # 2.2 Actual shunt voltage (0..~3.2 V at A0 on D1 mini)
   - platform: template
