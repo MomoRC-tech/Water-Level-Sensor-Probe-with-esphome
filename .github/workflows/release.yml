@@ -63,12 +63,16 @@ jobs:
         EOF
         
     - name: Validate ESPHome config before release
+      env:
+        OTA_PASSWORD: ${{ secrets.OTA_PASSWORD }}
       run: |
         pip install esphome
+        OTA_PW=${OTA_PASSWORD:-TestOtaPassword123}
         cat > secrets.yaml << EOF
         wifi_ssid: "TestNetwork"
         wifi_password: "TestPassword123"
         ap_password: "TestApPassword123"
+        ota_password: "${OTA_PW}"
         EOF
         esphome config waterlevel-sensor.yaml
         
@@ -86,6 +90,8 @@ jobs:
         wifi_password: "your_password"
         # Optional: fallback Access Point (AP) password for ESPHome captive portal
         ap_password: "your_ap_password"
+        # OTA update password (add as GitHub secret OTA_PASSWORD for CI validation)
+        ota_password: "your_ota_password"
         EOF
         
         # Create installation guide
