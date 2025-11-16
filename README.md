@@ -154,24 +154,6 @@ Error detection
 ## Reference
 See full configuration: `waterlevel-sensor.yaml`.
 
-### YAML Excerpt
-```yaml
-deep_sleep:
-	id: main_deep_sleep
-	run_duration: 30s
-	sleep_duration: 10min
-
-switch:
-	- platform: output
-		id: sensor_power
-		restore_mode: ALWAYS_ON
-	- platform: template
-		id: deep_sleep_disable
-		turn_on_action:
-			- deep_sleep.prevent: main_deep_sleep
-		turn_off_action:
-			- deep_sleep.allow: main_deep_sleep
-```
 Filtering, calibration, and error logic are implemented via template sensors in the main file.
 
 ### ASCII Wiring Diagrams
