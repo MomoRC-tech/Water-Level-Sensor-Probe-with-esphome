@@ -110,11 +110,12 @@ All parameters appear as Home Assistant `number` entities (`entity_category: con
 - Filtering window (s): `cfg_filter_window_s`
 - Calibration points: `cfg_cal1_*`, `cfg_cal2_*` (currents + depths)
 - Shunt resistance (Ω): `cfg_shunt_resistance_ohm`
+- Sensor span (m): `cfg_sensor_span_m` (factory 5.0 m for TL‑136; change when using a different range sensor)
 
 Calibration
 - Provide two known pairs: (current mA, depth m from well head).
 - Validated: current delta > 0.1 mA, depth delta > 0.01 m, finite values.
-- If invalid, falls back to sensor span (0–5 m column → depth by geometry).
+- If invalid, falls back to configured sensor span (`cfg_sensor_span_m` column → depth by geometry).
 
 Filtering & warmup
 ```text
