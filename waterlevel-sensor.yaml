@@ -38,7 +38,10 @@ wifi:
 captive_portal:
 
 api:
+
 ota:
+  platform: esphome
+  password: !secret ota_password
 
 deep_sleep:
   id: main_deep_sleep

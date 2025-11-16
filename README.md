@@ -1,153 +1,160 @@
-# Well Water Level Monitoring with TL-136, ESP8266 (D1 mini) and ESPHome
+# Well Water Level Monitoring (TL‑136 + ESP8266 + ESPHome)
 
-Monitor a well (e.g. for a heat pump supply) using a 4–20 mA submersible pressure sensor (TL-136) and an ESP8266 D1 mini running ESPHome. Measurements are sent to Home Assistant for visualization, automation (pump protection, low level alarms, logging) and long-term analysis.
+Monitor a well (e.g. heat‑pump supply) with a 4–20 mA TL‑136 submersible pressure sensor and an ESP8266 D1 mini running ESPHome. Data flows into Home Assistant for visualization, alerts, and automations.
 
 ## Table of Contents
-1. Goals & Features
-2. Hardware Overview
-3. Wiring (Quick Summary)
-4. Functional Architecture (ESPHome)
-5. Configurable Parameters (Home Assistant)
-6. Two-Point Calibration
-7. Filtering & Warmup Logic
-8. Deep Sleep Behavior
-9. Computed / Diagnostic Entities
-10. Error Detection
-11. Installation & Commissioning
-12. Local Testing
-13. YAML Configuration Reference
-14. ASCII Wiring Diagram (Detailed)
-15. Extension Ideas
-16. License & Disclaimer
+- [Overview](#overview)
+- [Hardware Setup](#hardware-setup)
+- [Software](#software)
+- [Configuration](#configuration)
+- [Diagnostics](#diagnostics)
+- [Reference](#reference)
+- [License](#license)
 
 ---
-## 1. Goals & Features
-**Goal:** Reliable well water level tracking with low power usage and full configuration from Home Assistant UI.
+## Overview
+- Purpose: reliable well water level tracking with low power usage.
+- Power-saving: deep sleep by default (30 s active / 10 min sleep).
+- OTA-friendly: deep sleep can be disabled from Home Assistant.
+- Flexible setup: all geometry, calibration, and filtering are configurable from HA (no reflashing).
+- Safety: error sensor flags implausible shunt voltage range.
 
-**Features:**
-- Sensor power only when needed (relay control of 24 V supply)
-- Full geometry and calibration configuration via HA numbers (no reflashing)
-- Two-point linear calibration (mA → depth from well head) with automatic fallback to raw 0–5 m sensor span
-- Exponential moving average (configurable window seconds)
-- Warmup phase (first cycles suppressed → avoids distorted initial filtered value)
-- Deep Sleep (default: 30 s active / 10 min sleep) for low energy
-- Deep Sleep can be disabled via HA switch for OTA / debugging
-- Diagnostic entities (ADC voltage, loop current raw/filtered, sensor column, error flag)
-- Error binary sensor for implausible shunt voltage range
+What you get
+- Sensor power only when needed (relay switches the 24 V supply)
+- Two‑point linear calibration (mA → depth), with robust fallback
+- Exponential moving average filtering and warmup handling
+- User‑facing level entities plus diagnostics for troubleshooting
+
+Quick start (5 steps)
+1) Assemble hardware (choose wiring option) and share grounds as indicated.
+2) Create `secrets.yaml` with Wi‑Fi (and optional `ota_password`).
+3) Run local validation scripts to catch issues early.
+4) Add `waterlevel-sensor.yaml` in ESPHome; flash via USB once, then OTA.
+5) In Home Assistant, set geometry, shunt value, filter window, then perform two‑point calibration.
 
 ---
-## 2. Hardware Overview
-**Sensor:** TL-136 submersible pressure transducer (0–5 m, 4–20 mA, 24 V)
-**Controller:** ESP8266 D1 mini (ESPHome)
-**Relay Module:** 1-channel, 5 V (switches +24 V line to sensor)
-**Shunt:** 150 Ω (≥0.25 W) in sensor return path (converts loop current to measurable voltage)
-**Power Supplies:** 24 V (sensor), 5 V (ESP + relay, e.g. USB)
+## Hardware Setup
+Core parts
+- Sensor: TL‑136, 0–5 m, 4–20 mA, 24 V
+- Controller: ESP8266 D1 mini (ESPHome)
+- Relay: 1‑channel 5 V module (switches +24 V to the sensor)
+- Shunt: 150 Ω (≥0.25 W) in return path (loop current → voltage)
+- Power: 24 V (sensor) and 5 V (ESP + relay)
 
-**Recommended addons:**
+Quick wiring
+- Forward: `+24V → Relay COM → Relay NO → Cable 1 → Sensor (+)`
+- Return: `Sensor (–) → Cable 2 → measurement point → 150 Ω shunt → 24V‑GND`
+- D1 mini: `A0 → measurement point`, `GND → 24V‑GND`, `D5(GPIO14) → Relay IN`, `5V → Relay VCC`, `GND → Relay GND`
+
+Recommended add‑ons
 - 1–2 kΩ series resistor between measurement point and A0 (input protection)
-- 100 nF–1 µF capacitor from measurement point to ground (analog low-pass)
+- 100 nF–1 µF capacitor from measurement point to GND (analog low‑pass)
 
----
-## 3. Wiring (Quick Summary)
-24 V supply: `+24V → Relay COM`, `Relay NO → cable (Ader 1) → Sensor (+)`
-Return path: `Sensor (–) → cable (Ader 2) → measurement point → shunt (150 Ω) → 24V-GND`
-D1 mini: `A0 → measurement point`, `GND → 24V-GND (shared)`, `D5(GPIO14) → Relay IN`, `5V → Relay VCC`, `GND → Relay GND`
+Two wiring options (choose one)
+- Low‑side switching (DEFAULT in this guide): the relay switches the 24 V “−/GND”.
+	- Pros: lets you open the DC‑DC ground so the 24 V converter and sensor draw essentially zero idle power when not measuring; reduces standby consumption.
+	- Cons: when the relay is open the measurement node floats; requires a pulldown and input protection to keep the ADC stable.
+- High‑side switching (previous design): the relay switches `+24 V` to the sensor.
+	- Pros: ADC node stays referenced to GND at all times; simplest to measure and debug; very stable.
+	- Cons: the 24 V converter remains grounded and may draw small idle current even when the sensor is off.
 
-Optional: series resistor + capacitor at measurement point for smoother readings.
+Low‑side implementation details (default)
+- Add a 470 kΩ–1 MΩ pulldown from the measurement node (relay COM / shunt top) to MCU GND.
+- Keep the 1–2 kΩ series resistor to A0 and a 100 nF–1 µF capacitor from the node to GND.
+- Ensure the 24 V supply `Vin−` and `Vout−` are common; MCU GND ties to that common when the relay closes.
 
----
-## 4. Functional Architecture (ESPHome)
-- Board: `esp8266.board: d1_mini`
-- Deep sleep block: `run_duration: 30s`, `sleep_duration: 10min`
-- `on_boot`: reads HA switch `deep_sleep_disable` to call `deep_sleep.prevent` or `deep_sleep.allow`
-- `on_shutdown`: turns relay OFF (sensor unpowered before sleeping)
-- Relay on D5 with `inverted: true` (active LOW modules). `restore_mode: ALWAYS_ON` ensures sensor is powered immediately after wake.
-
----
-## 5. Configurable Parameters (Home Assistant)
-Created as `number` entities (`entity_category: config`):
-- Geometry: ground_to_wellhead, head_to_sensor, head_to_pump1, head_to_pump2, head_to_bottom (informational currently)
-- Filtering window seconds: `cfg_filter_window_s`
-- Calibration points: currents + depths (`cfg_cal1_*`, `cfg_cal2_*`)
-- Shunt resistance: `cfg_shunt_resistance_ohm`
-
-All adjustments survive deep sleep and reboot (restore_value).
-
----
-## 6. Two-Point Calibration
-Two known points (current mA and depth m from well head) define a linear mapping. Validation checks ensure meaningful difference (current delta >0.1 mA, depth delta >0.01 m, no NaNs). If invalid, fallback uses theoretical sensor span: sensor column (0–5 m) above sensor → depth = sensor_position − column.
-
-Formula (valid case):
-```
-t = (I - I1) / (I2 - I1)
-depth = D1 + t * (D2 - D1)
+Quick wiring (low‑side)
+```text
+Relay NO ("ON") → MCU GND
+Relay COM → measurement node → shunt (150 Ω) → 24V Vin− (common with Vout−)
+Relay COM → A0 via 1–2 kΩ; node → 100 nF–1 µF → GND; node → 470 kΩ–1 MΩ → GND
+24V Vin+ ← +5 V input (DC‑DC); 24V Vout+ → Sensor (+) via Cable 1
+Sensor (−) via Cable 2 → measurement node
 ```
 
----
-## 7. Filtering & Warmup Logic
-Exponential moving average:
-```
-avg = avg + alpha * (raw - avg)
-alpha = dt / window_s        # dt = sensor_update_sec
-```
-Warmup: first `WARMUP_SAMPLES` (3) cycles output `NAN` while internal state converges.
+Full diagrams are in [ASCII Wiring Diagrams](#ascii-wiring-diagrams).
 
 ---
-## 8. Deep Sleep Behavior
-Normal cycle:
-1. Wake → relay ON (sensor energized)
-2. Several measurement cycles (warmup) executed
-3. Filtered values published to HA
-4. `on_shutdown` → relay OFF → device sleeps (sensor & coil unpowered)
+## Software
+ESPHome device: `waterlevel-sensor.yaml` (ESP8266 D1 mini)
 
-Debug / OTA:
-Enable HA switch “Deep Sleep Disable” → `deep_sleep.prevent`. Device remains awake. Disable the switch to re-enable sleep.
+Local testing (before flashing)
 
----
-## 9. Computed / Diagnostic Entities (Selection)
-- `shunt_voltage` – computed shunt voltage (ADC * 3.2 factor for D1 mini scaling)
-- `loop_current_raw` / `loop_current_filtered` – raw vs filtered loop current (mA)
-- `sensor_column_filtered_m` – filtered water column (0–5 m) over sensor (diagnostic)
-- `water_depth_from_head` – water surface depth below well head (m)
-- `water_depth_from_ground` – depth below ground surface
-- `water_over_pump1`, `water_over_pump2` – water height over pumps (positive = submerged)
-
----
-## 10. Error Detection
-`binary_sensor.water_sensor_error` is true when sensor is powered yet shunt voltage is implausible (<0.05 V or >3.2 V). 10 s delayed ON/OFF filters transient spikes.
-
----
-## 11. Installation & Commissioning
-1. Assemble hardware; ensure common ground between 24 V and 5 V.
-2. Create `secrets.yaml` with your Wi-Fi credentials (see below).
-3. Add `waterlevel-sensor.yaml` to ESPHome dashboard.
-4. **Test locally first** (see Testing section below).
-5. Flash via USB (initial) then OTA subsequent updates.
-6. In HA, tune geometry numbers, shunt resistance, filter window.
-7. Set calibration after stable readings (avoid using warmup phase values).
-8. Optional: add series resistor + capacitor for noise reduction.
-
-Calibration tip: Use known low/high water states or a reference measurement (manual probe). Record stable currents and depths before entering them.
-
-### Local Testing (Before Flashing)
-Run local validation to catch errors before flashing:
-
-**Windows (PowerShell):**
+Windows (PowerShell)
 ```powershell
 ./scripts/test-local.ps1
 ```
 
-**Linux/macOS (Bash):**
+Linux/macOS (Bash)
 ```bash
 chmod +x scripts/test-local.sh
 ./scripts/test-local.sh
 ```
 
-This validates YAML syntax, checks ESPHome configuration, and test-compiles the firmware.
+These scripts lint Markdown/YAML, validate the ESPHome configuration, and can compile firmware. Ensure a `secrets.yaml` exists (see below).
+
+Build & flash
+1) Add the YAML to your ESPHome dashboard.
+2) First flash via USB; subsequent updates use OTA.
+3) For CI releases, tags trigger packaging in GitHub Actions (optional).
+
+Minimal secrets.yaml
+```yaml
+wifi_ssid: "YourNetworkName"
+wifi_password: "YourPassword"
+ap_password: "APFallbackPassword"
+# If configured in YAML: ota_password: "YourOTAPassword"
+```
 
 ---
-## 12. YAML Configuration Reference (Excerpt)
-See full file: `waterlevel-sensor.yaml`.
+## Configuration
+All parameters appear as Home Assistant `number` entities (`entity_category: config`). Values persist across deep sleep.
+
+- Geometry numbers: `ground_to_wellhead`, `head_to_sensor`, `head_to_pump1`, `head_to_pump2`, `head_to_bottom` (informational)
+- Filtering window (s): `cfg_filter_window_s`
+- Calibration points: `cfg_cal1_*`, `cfg_cal2_*` (currents + depths)
+- Shunt resistance (Ω): `cfg_shunt_resistance_ohm`
+
+Calibration
+- Provide two known pairs: (current mA, depth m from well head).
+- Validated: current delta > 0.1 mA, depth delta > 0.01 m, finite values.
+- If invalid, falls back to sensor span (0–5 m column → depth by geometry).
+
+Filtering & warmup
+```text
+avg = avg + alpha * (raw - avg)
+alpha = dt / window_s     (dt = update period)
+```
+Warmup suppresses the first few publishes to avoid skewed initial values.
+
+Deep sleep
+- Typical cycle: wake → energize sensor → measure → publish → power off → sleep.
+- Toggle “Deep Sleep Disable” in HA to keep the device awake for OTA/debugging.
+
+Installation checklist
+1. Build hardware; share ground between 24 V and 5 V rails.
+2. Create `secrets.yaml` and validate locally (scripts above).
+3. Add `waterlevel-sensor.yaml` to ESPHome and flash.
+4. In HA, set geometry, shunt resistance, filter window, then perform calibration.
+
+---
+## Diagnostics
+User‑facing
+- `water_depth_from_head`, `water_depth_from_ground`, `water_over_pump1`, `water_over_pump2`
+
+Diagnostic entities
+- `shunt_voltage` (ADC × 3.2 for D1 mini scaling)
+- `loop_current_raw`, `loop_current_filtered`
+- `sensor_column_filtered_m` (0–5 m column over sensor)
+
+Error detection
+- `binary_sensor.water_sensor_error` → TRUE if implausible shunt voltage (< 0.05 V or > 3.2 V). 10 s delayed ON/OFF to ignore spikes.
+
+---
+## Reference
+See full configuration: `waterlevel-sensor.yaml`.
+
+### YAML Excerpt
 ```yaml
 deep_sleep:
 	id: main_deep_sleep
@@ -165,39 +172,57 @@ switch:
 		turn_off_action:
 			- deep_sleep.allow: main_deep_sleep
 ```
-Filtering, calibration, error logic implemented via template sensors (see file for full details).
+Filtering, calibration, and error logic are implemented via template sensors in the main file.
 
----
-## 13. Local Testing
-Before committing or flashing, validate your configuration locally:
+### ASCII Wiring Diagrams
 
-**Windows:**
-```powershell
-./scripts/test-local.ps1
+Low‑side wiring (default)
+```
+										HOUSE / BASEMENT
+					┌─────────────────────────────────────┐
+					│                                     │
+					│       DC‑DC 24 V BOOST (from 5 V)   │
+					│                                     │
+					│  Vin+  ◄───────────────  +5 V       │
+					│  Vin−  ─────────────┐               │
+					│  Vout+ ────────┐    │               │
+					│  Vout− ─────┐  │    │  (Vin− tied to Vout−) 
+					│             │  │    │
+					│             │  │    └───┐
+					│             │  │        │
+					│             │  │     ┌──┴───┐   RELAY MODULE (1‑ch, 5 V)
+					│             │  │     │ COM  │───── measurement node ──┬───── A0 (via 1–2 kΩ)
+					│             │  │     │      │                         │
+					│             │  │     │ NO   │───── MCU GND             │
+					│             │  │     └──────┘                         │
+					│             │  │                                       │
+					│             │  └───[ 150 Ω shunt ]─── to 24V Vout−/Vin−┘
+					│             │
+					│      +24V ──┴────────────── Cable 1 ─────► Sensor (+)  │
+					│                                     │                  │
+					│  Cable 2 ◄────────────── Sensor (−) ◄──────────────────┘
+					│
+					│ Measurement node: add 470 kΩ–1 MΩ → GND and 100 nF–1 µF → GND
+					│
+					│          D1 MINI (ESP8266)          │
+					│      5V_in  ◄── 5V supply / USB     │
+					│      GND    ────────────────┐
+					│      D5 (GPIO14) ─────► Relay IN    │
+					│      5V          ─────► Relay VCC   │
+					│      GND         ─────► Relay GND   │
+					└─────────────────────────────────────┘
+
+										WELL SHAFT
+					┌─────────────────────────────────────┐
+					│        TL‑136 LEVEL SENSOR          │
+					│      (+)  ◄────────── Cable 1       │
+					│      (−)  ───────────► Cable 2      │
+					└─────────────────────────────────────┘
 ```
 
-**Linux/macOS:**
-```bash
-chmod +x scripts/test-local.sh
-./scripts/test-local.sh
-```
+<details>
+<summary>High‑side wiring (previous design) — click to expand</summary>
 
-**What it tests:**
-- Python and ESPHome installation
-- YAML syntax validation
-- ESPHome config validation
-- Full firmware compilation
-- README and LICENSE checks
-- Git status
-
-**Creating a secrets.yaml for testing:**
-```yaml
-wifi_ssid: "YourNetworkName"
-wifi_password: "YourPassword"
-```
-
----
-## 14. ASCII Wiring Diagram (Detailed)
 ```
 										HOUSE / BASEMENT
 					┌─────────────────────────────────────┐
@@ -249,29 +274,11 @@ wifi_password: "YourPassword"
 					│                                     │
 					└─────────────────────────────────────┘
 ```
-**Signal path during measurement:**
-- Forward: `+24V → Relay COM → Relay NO → Cable 1 → Sensor (+)`
-- Return: `Sensor (–) → Cable 2 → measurement point (top of shunt) → shunt → 24V-GND`
-- D1 mini measures voltage at measurement point vs ground (scaled by shunt).
-- Relay IN (D5) controls +24 V feed via COM/NO.
-- 5 V powers D1 mini + relay. 24 V and 5 V share a common ground.
 
-**Optional (recommended):**
-- 1–2 kΩ series resistor between measurement point and A0
-- 100 nF–1 µF capacitor measurement point to GND (analog low-pass)
+</details>
 
 ---
-## 15. Extension Ideas
-- Adaptive `sleep_duration` when level changes rapidly
-- Alerts (persistent notifications) on low/high thresholds
-- Historical storage (InfluxDB / Long-Term Statistics)
-- Temperature compensation (sensor drift mitigation)
-- Even lower power: external logic to hard-cut 24 V supply outside measurement window
-
----
-## 16. License & Disclaimer
+## License
 License: See `LICENSE`.
 
-Disclaimer: Use at your own risk. Mains / higher voltage supply handling only by qualified persons. Ensure safe operation of 24 V components and waterproof integrity of downhole cabling.
-
-Contributions & improvements welcome.
+Disclaimer: Use at your own risk. Handle higher‑voltage supplies safely. Ensure waterproof integrity of downhole cabling. Contributions welcome!
