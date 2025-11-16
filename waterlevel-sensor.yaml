@@ -353,6 +353,10 @@ sensor:
     accuracy_decimals: 3
     icon: "mdi:waves"
     update_interval: ${sensor_update_sec}s
+    filters:
+      - lambda: |-
+          if (isnan(x)) return {};
+          return x;
     lambda: |-
       if (!id(sensor_power).state) return NAN;
 
@@ -392,6 +396,10 @@ sensor:
     accuracy_decimals: 3
     icon: "mdi:waves-arrow-up"
     update_interval: ${sensor_update_sec}s
+    filters:
+      - lambda: |-
+          if (isnan(x)) return {};
+          return x;
     lambda: |-
       float depth_head = id(water_depth_from_head).state;       // m below well head
       float ground_to_head = id(cfg_ground_to_wellhead).state;  // m (ground -> well head)
@@ -412,6 +420,10 @@ sensor:
     accuracy_decimals: 3
     icon: "mdi:pump"
     update_interval: ${sensor_update_sec}s
+    filters:
+      - lambda: |-
+          if (isnan(x)) return {};
+          return x;
     lambda: |-
       float depth_head = id(water_depth_from_head).state;
       float d_pump1 = id(cfg_head_to_pump1).state;
@@ -428,6 +440,10 @@ sensor:
     accuracy_decimals: 3
     icon: "mdi:pump"
     update_interval: ${sensor_update_sec}s
+    filters:
+      - lambda: |-
+          if (isnan(x)) return {};
+          return x;
     lambda: |-
       float depth_head = id(water_depth_from_head).state;
       float d_pump2 = id(cfg_head_to_pump2).state;
