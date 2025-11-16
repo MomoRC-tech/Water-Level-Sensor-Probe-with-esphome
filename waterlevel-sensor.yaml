@@ -228,6 +228,19 @@ number:
     max_value: 500.0
     step: 1.0
 
+  # Sensor full measurable water column span (m) above sensor (factory = 5 m for TL-136)
+  - platform: template
+    name: "CFG Sensor Span"
+    id: cfg_sensor_span_m
+    unit_of_measurement: "m"
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_value: 5.0
+    min_value: 1.0
+    max_value: 50.0
+    step: 0.1
+
 # ============================================================
 # 2) SENSING & CALCULATIONS
 # ============================================================
@@ -327,7 +340,7 @@ sensor:
   # 2.5 Filtered sensor column (0..5 m above sensor) – diagnostic only
   - platform: template
     id: sensor_column_filtered_m
-    name: "${friendly_name} Filtered Sensor Column (0-5 m above sensor)"
+    name: "${friendly_name} Filtered Sensor Column"
     unit_of_measurement: "m"
     accuracy_decimals: 3
     icon: "mdi:waves"
@@ -338,15 +351,16 @@ sensor:
 
       const float I_MIN = 4.0f;
       const float I_MAX = 20.0f;
-      const float RANGE_M = 5.0f;
+      float range_m = id(cfg_sensor_span_m).state; // configured sensor span
+      if (isnan(range_m) || range_m < 0.5f) range_m = 5.0f;
 
       float i_mA = id(loop_current_filtered).state;
       if (isnan(i_mA)) return NAN;
       if (i_mA < 0.5f || i_mA > 25.0f) return NAN;
 
-      float level = (i_mA - I_MIN) / (I_MAX - I_MIN) * RANGE_M;
+      float level = (i_mA - I_MIN) / (I_MAX - I_MIN) * range_m;
       if (level < 0.0f) level = 0.0f;
-      if (level > RANGE_M) level = RANGE_M;
+      if (level > range_m) level = range_m;
       return level;
 
   # 2.6 Calibrated water depth from well head (m)
@@ -385,7 +399,7 @@ sensor:
         float t = (i - i1) / (i2 - i1);
         depth_from_head = d1 + t * (d2 - d1);
       } else {
-        // Fallback: theoretical sensor curve (0-5 m column above sensor)
+        // Fallback: theoretical sensor curve (0..sensor span column above sensor)
         float h_over_sensor = id(sensor_column_filtered_m).state;
         if (isnan(h_over_sensor)) return NAN;
         float d_sensor = id(cfg_head_to_sensor).state;
