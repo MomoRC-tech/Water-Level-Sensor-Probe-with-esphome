@@ -5,6 +5,9 @@ on:
     tags:
       - 'v*.*.*'
 
+permissions:
+  contents: write
+
 jobs:
   create-release:
     runs-on: ubuntu-latest
@@ -65,6 +68,7 @@ jobs:
         cat > secrets.yaml << EOF
         wifi_ssid: "TestNetwork"
         wifi_password: "TestPassword123"
+        ap_password: "TestApPassword123"
         EOF
         esphome config waterlevel-sensor.yaml
         
@@ -80,8 +84,8 @@ jobs:
         # Copy this to secrets.yaml and fill in your credentials
         wifi_ssid: "your_network_name"
         wifi_password: "your_password"
-        # Optional: uncomment if you want to use secrets for AP fallback
-        # fallback_ap_password: "your_fallback_password"
+        # Optional: fallback Access Point (AP) password for ESPHome captive portal
+        ap_password: "your_ap_password"
         EOF
         
         # Create installation guide
