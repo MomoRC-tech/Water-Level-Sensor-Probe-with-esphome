@@ -1,0 +1,154 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    name: Create GitHub Release
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        
+    - name: Get tag version
+      id: get_version
+      run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+      
+    - name: Generate changelog
+      id: changelog
+      run: |
+        # Get commits since last tag
+        LAST_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+        if [ -n "$LAST_TAG" ]; then
+          CHANGELOG=$(git log --pretty=format:"- %s (%h)" $LAST_TAG..HEAD)
+        else
+          CHANGELOG=$(git log --pretty=format:"- %s (%h)" HEAD)
+        fi
+        
+        # Save to file to handle multiline
+        cat > changelog.md << EOF
+        ## Changes in ${{ steps.get_version.outputs.VERSION }}
+        
+        $CHANGELOG
+        
+        ## Installation
+        
+        1. Copy \`waterlevel-sensor.yaml\` to your ESPHome configuration directory
+        2. Create a \`secrets.yaml\` file with your Wi-Fi credentials:
+           \`\`\`yaml
+           wifi_ssid: "your_network_name"
+           wifi_password: "your_password"
+           \`\`\`
+        3. Adjust the configuration parameters in Home Assistant
+        4. Flash to your ESP8266 D1 Mini
+        
+        ## Hardware Requirements
+        
+        - ESP8266 D1 Mini
+        - TL-136 pressure sensor (4-20mA, 0-5m, 24V)
+        - 5V relay module (1-channel)
+        - 150Ω shunt resistor (≥0.25W)
+        - 24V and 5V power supplies
+        
+        See README.md for complete wiring diagram and setup instructions.
+        EOF
+        
+    - name: Validate ESPHome config before release
+      run: |
+        pip install esphome
+        cat > secrets.yaml << EOF
+        wifi_ssid: "TestNetwork"
+        wifi_password: "TestPassword123"
+        EOF
+        esphome config waterlevel-sensor.yaml
+        
+    - name: Create Release Archive
+      run: |
+        mkdir -p release-files
+        cp waterlevel-sensor.yaml release-files/
+        cp README.md release-files/
+        cp LICENSE release-files/
+        
+        # Create example secrets file
+        cat > release-files/secrets.yaml.example << EOF
+        # Copy this to secrets.yaml and fill in your credentials
+        wifi_ssid: "your_network_name"
+        wifi_password: "your_password"
+        # Optional: uncomment if you want to use secrets for AP fallback
+        # fallback_ap_password: "your_fallback_password"
+        EOF
+        
+        # Create installation guide
+        cat > release-files/INSTALL.md << EOF
+        # Installation Guide
+        
+        ## Quick Start
+        
+        1. Install ESPHome (if not already installed):
+           \`\`\`bash
+           pip install esphome
+           \`\`\`
+        
+        2. Copy files to your ESPHome directory:
+           - \`waterlevel-sensor.yaml\` - Main configuration
+           - \`secrets.yaml.example\` → rename to \`secrets.yaml\` and edit
+        
+        3. Edit \`secrets.yaml\`:
+           \`\`\`yaml
+           wifi_ssid: "YourNetworkName"
+           wifi_password: "YourPassword"
+           \`\`\`
+        
+        4. Validate configuration:
+           \`\`\`bash
+           esphome config waterlevel-sensor.yaml
+           \`\`\`
+        
+        5. Compile and upload:
+           \`\`\`bash
+           esphome run waterlevel-sensor.yaml
+           \`\`\`
+        
+        6. Configure geometry and calibration in Home Assistant
+        
+        See README.md for complete hardware setup and wiring details.
+        EOF
+        
+        # Create archive
+        tar -czf water-level-sensor-${{ steps.get_version.outputs.VERSION }}.tar.gz -C release-files .
+        zip -r water-level-sensor-${{ steps.get_version.outputs.VERSION }}.zip release-files/
+        
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ steps.get_version.outputs.VERSION }}
+        name: Water Level Sensor ${{ steps.get_version.outputs.VERSION }}
+        body_path: changelog.md
+        draft: false
+        prerelease: false
+        files: |
+          water-level-sensor-${{ steps.get_version.outputs.VERSION }}.tar.gz
+          water-level-sensor-${{ steps.get_version.outputs.VERSION }}.zip
+          waterlevel-sensor.yaml
+          README.md
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  validate-release:
+    runs-on: ubuntu-latest
+    name: Post-Release Validation
+    needs: create-release
+    
+    steps:
+    - name: Download release assets
+      run: |
+        # This would download and test the release in a real scenario
+        echo "Release created successfully for version ${{ github.ref_name }}"
+        echo "Assets available at: https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}"

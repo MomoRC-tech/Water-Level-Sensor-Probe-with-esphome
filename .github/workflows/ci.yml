@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  validate-esphome:
+    runs-on: ubuntu-latest
+    name: Validate ESPHome Configuration
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: Install ESPHome
+      run: pip install esphome
+      
+    - name: Create secrets file for validation
+      run: |
+        mkdir -p secrets
+        cat > secrets.yaml << EOF
+        wifi_ssid: "TestNetwork"
+        wifi_password: "TestPassword123"
+        EOF
+        
+    - name: Validate YAML syntax
+      run: esphome config waterlevel-sensor.yaml
+      
+    - name: Compile (dry-run)
+      run: esphome compile waterlevel-sensor.yaml --dry-run
+
+  lint:
+    runs-on: ubuntu-latest
+    name: Lint YAML Files
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: Install yamllint
+      run: pip install yamllint
+      
+    - name: Lint YAML files
+      run: |
+        yamllint -d relaxed *.yaml
+        yamllint -d relaxed .github/workflows/*.yml
+
+  markdown-lint:
+    runs-on: ubuntu-latest
+    name: Lint Markdown
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Lint README
+      uses: DavidAnson/markdownlint-cli2-action@v14
+      with:
+        globs: '**/*.md'
+        config: |
+          {
+            "line-length": { "line_length": 120 },
+            "no-inline-html": false
+          }
