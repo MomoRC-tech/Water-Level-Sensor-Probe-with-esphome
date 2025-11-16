@@ -117,6 +117,17 @@ Calibration
 - Validated: current delta > 0.1 mA, depth delta > 0.01 m, finite values.
 - If invalid, falls back to configured sensor span (`cfg_sensor_span_m` column → depth by geometry).
 
+Example (factory TL‑136, span 5.0 m, sensor mounted 5.0 m below well head)
+| Condition | Loop current | Water column above sensor | Depth from well head |
+|-----------|--------------|---------------------------|----------------------|
+| Dry (top of water at sensor) | ~4.00 mA | 0.0 m | 5.0 m (head_to_sensor) |
+| Full span | ~20.00 mA | 5.0 m | 0.0 m (head_to_sensor - span) |
+
+Set calibration point 1 to (4.00 mA, 5.0 m) and point 2 to (20.00 mA, 0.0 m), then adjust after confirming stable readings.
+
+Defect / disconnect detection
+- Readings with loop current < 4 mA (below nominal 4–20 mA range) are treated as invalid and user-facing level sensors publish no value (suppressed as NaN).
+
 Filtering & warmup
 ```text
 avg = avg + alpha * (raw - avg)
