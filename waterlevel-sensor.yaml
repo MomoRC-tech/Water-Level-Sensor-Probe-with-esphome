@@ -366,7 +366,7 @@ sensor:
   # 2.6 Calibrated water depth from well head (m)
   - platform: template
     id: water_depth_from_head
-    name: "${friendly_name} Water Level from Well Head"
+    name: "${friendly_name} Level from Well Head"
     unit_of_measurement: "m"
     device_class: distance
     state_class: measurement
@@ -411,7 +411,7 @@ sensor:
   # 2.7 Water depth from ground surface (m)
   - platform: template
     id: water_depth_from_ground
-    name: "${friendly_name} Water Level from Ground"
+    name: "${friendly_name} Level from Ground"
     unit_of_measurement: "m"
     device_class: distance
     state_class: measurement
@@ -437,7 +437,7 @@ sensor:
   # 2.8 Water height above pump 1 (m), positive = pump submerged
   - platform: template
     id: water_over_pump1
-    name: "${friendly_name} Water Height Above Pump 1"
+    name: "${friendly_name} Height Above Pump 1"
     unit_of_measurement: "m"
     device_class: distance
     state_class: measurement
@@ -459,7 +459,7 @@ sensor:
   # 2.9 Water height above pump 2 (m)
   - platform: template
     id: water_over_pump2
-    name: "${friendly_name} Water Height Above Pump 2"
+    name: "${friendly_name} Height Above Pump 2"
     unit_of_measurement: "m"
     device_class: distance
     state_class: measurement
