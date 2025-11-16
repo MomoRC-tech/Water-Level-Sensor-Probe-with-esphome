@@ -65,7 +65,7 @@ switch:
     id: sensor_power
     output: sensor_power_out
     restore_mode: ALWAYS_ON     # After every boot / wake sensor ON immediately
-    entity_category: config
+    entity_category: diagnostic
 
   # Disable deep sleep via HA (for OTA, debugging)
   - platform: template
