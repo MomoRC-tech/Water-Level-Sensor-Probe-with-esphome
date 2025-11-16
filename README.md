@@ -106,11 +106,16 @@ ap_password: "APFallbackPassword"
 ## Configuration
 All parameters appear as Home Assistant `number` entities (`entity_category: config`). Values persist across deep sleep.
 
-- Geometry numbers: `ground_to_wellhead`, `head_to_sensor`, `head_to_pump1`, `head_to_pump2`, `head_to_bottom` (informational)
+- Geometry numbers: `cfg_surface_to_well_head` (surface ↓ head, positive), `cfg_head_to_sensor`, `cfg_head_to_pump1`, `cfg_head_to_pump2`, `cfg_head_to_bottom` (informational)
 - Filtering window (s): `cfg_filter_window_s`
 - Calibration points: `cfg_cal1_*`, `cfg_cal2_*` (currents + depths)
 - Shunt resistance (Ω): `cfg_shunt_resistance_ohm`
 - Sensor span (m): `cfg_sensor_span_m` (factory 5.0 m for TL‑136; change when using a different range sensor)
+
+Depth semantics
+- "Depth Below Head" (`water_depth_from_head`) is distance from the well head downward to the current water surface.
+- "Depth Below Surface" (`water_depth_from_surface`) = Depth Below Head + Surface→Head (the fixed offset `cfg_surface_to_well_head`).
+- Positive values mean the water surface lies below the reference (head or ground surface). Invalid / unavailable readings publish as no value (NaN).
 
 Calibration
 - Provide two known pairs: (current mA, depth m from well head).
@@ -146,17 +151,32 @@ Installation checklist
 4. In HA, set geometry, shunt resistance, filter window, then perform calibration.
 
 ---
-## Diagnostics
-User‑facing
-- `water_depth_from_head`, `water_depth_from_ground`, `water_over_pump1`, `water_over_pump2`
+## Diagnostics & Entities
+User‑facing sensors
+- `water_depth_from_head` (Depth Below Head)
+- `water_depth_from_surface` (Depth Below Surface)
+- `water_over_pump1` (Over Pump 1)
+- `water_over_pump2` (Over Pump 2)
+- `loop_current_filtered` (Loop Current)
 
-Diagnostic entities
-- `shunt_voltage` (ADC × 3.2 for D1 mini scaling)
-- `loop_current_raw`, `loop_current_filtered`
-- `sensor_column_filtered_m` (0–5 m column over sensor)
+Diagnostic (internal) entities
+- `shunt_adc_raw` (ADC Internal 0–1 V raw)
+- `shunt_voltage` (ADC × 3.2 scaling to actual shunt voltage)
+- `loop_current_raw` (raw loop current mA)
+- `sensor_column_filtered_m` (filtered water column above sensor)
+- `loop_current_filtered` (filtered loop current, user-facing)
 
 Error detection
 - `binary_sensor.water_sensor_error` → TRUE if implausible shunt voltage (< 0.05 V or > 3.2 V). 10 s delayed ON/OFF to ignore spikes.
+
+Switches
+- `sensor_power` (Sensor Power)
+- `deep_sleep_disable` (Stay Awake)
+
+Configuration numbers (prefix omitted in HA UI display name)
+- `cfg_surface_to_well_head`, `cfg_head_to_sensor`, `cfg_head_to_pump1`, `cfg_head_to_pump2`, `cfg_head_to_bottom`
+- `cfg_filter_window_s`, `cfg_cal1_current_mA`, `cfg_cal1_depth_m`, `cfg_cal2_current_mA`, `cfg_cal2_depth_m`
+- `cfg_shunt_resistance_ohm`, `cfg_sensor_span_m`
 
 ---
 ## Reference

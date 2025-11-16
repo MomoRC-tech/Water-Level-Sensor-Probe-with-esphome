@@ -1,6 +1,6 @@
 substitutions:
-  devicename: water-level-sensor
-  friendly_name: "WaterLevel"
+  devicename: welllevel
+  friendly_name: "WellLevel"
   sensor_update_sec: "5.0"   # Measurement interval in seconds
 
 esphome:
@@ -56,22 +56,20 @@ output:
   - platform: gpio
     pin: D5              # D5 (GPIO14) -> relay IN
     id: sensor_power_out
-    inverted: false       # Many relay boards: LOW = on, HIGH = off
+    inverted: false
 
 switch:
-  # Relay powering the sensor
   - platform: output
-    name: "${friendly_name} Sensor Power"
+    name: "Sensor Power"
     id: sensor_power
     output: sensor_power_out
-    restore_mode: ALWAYS_ON     # After every boot / wake sensor ON immediately
+    restore_mode: ALWAYS_ON
     entity_category: diagnostic
 
-  # Disable deep sleep via HA (for OTA, debugging)
   - platform: template
-    name: "${friendly_name} Disable Deep Sleep"
+    name: "Stay Awake"
     id: deep_sleep_disable
-    icon: "mdi:power-sleep"
+    icon: "mdi:power-sleep-off"
     entity_category: config
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
@@ -85,16 +83,16 @@ switch:
 # ============================================================
 
 number:
-  # Distance ground surface to well head (positive if well head above ground)
+  # Distance from surface (ground level) down to well head (positive value means well head is below surface)
   - platform: template
-    name: "CFG Ground to Well Head"
-    id: cfg_ground_to_wellhead
+    name: "CFG Surface to Well Head"
+    id: cfg_surface_to_well_head
     unit_of_measurement: "m"
     entity_category: config
     optimistic: true
     restore_value: true
     initial_value: 0.0
-    min_value: -5.0
+    min_value: 0.0
     max_value: 5.0
     step: 0.01
 
@@ -254,21 +252,23 @@ sensor:
   - platform: adc
     pin: A0
     id: shunt_adc_raw
-    name: "${friendly_name} ADC Internal"
+    name: "ADC Internal"
     unit_of_measurement: "V"
     accuracy_decimals: 3
     update_interval: ${sensor_update_sec}s
     entity_category: diagnostic
+    internal: true
     # External hardware: mandatory 1 kΩ series resistor + optional RC filter for protection
 
   # 2.2 Actual shunt voltage (0..~3.2 V at A0 on D1 mini)
   - platform: template
     id: shunt_voltage
-    name: "${friendly_name} Shunt Voltage Raw"
+    name: "Shunt Voltage Raw"
     unit_of_measurement: "V"
     accuracy_decimals: 3
     update_interval: ${sensor_update_sec}s
     entity_category: diagnostic
+    internal: true
     lambda: |-
       float u_adc = id(shunt_adc_raw).state;
       if (isnan(u_adc)) return NAN;
@@ -278,11 +278,12 @@ sensor:
   # 2.3 Raw loop current (mA) from shunt voltage
   - platform: template
     id: loop_current_raw
-    name: "${friendly_name} Loop Current Raw"
+    name: "Loop Current Raw"
     unit_of_measurement: "mA"
     accuracy_decimals: 3
     update_interval: ${sensor_update_sec}s
     entity_category: diagnostic
+    internal: true
     lambda: |-
       if (!id(sensor_power).state) {
         return NAN;  // Sensor off
@@ -301,11 +302,12 @@ sensor:
   # 2.4 Filtered loop current with warmup phase
   - platform: template
     id: loop_current_filtered
-    name: "${friendly_name} Loop Current Filtered"
+    name: "Loop Current"
     unit_of_measurement: "mA"
     accuracy_decimals: 3
     update_interval: ${sensor_update_sec}s
     entity_category: diagnostic
+    icon: "mdi:current-ac"
     lambda: |-
       if (!id(sensor_power).state) {
         return NAN;
@@ -347,12 +349,13 @@ sensor:
   # 2.5 Filtered sensor column (0..5 m above sensor) – diagnostic only
   - platform: template
     id: sensor_column_filtered_m
-    name: "${friendly_name} Filtered Sensor Column"
+    name: "Sensor Column"
     unit_of_measurement: "m"
     accuracy_decimals: 3
     icon: "mdi:waves"
     update_interval: ${sensor_update_sec}s
     entity_category: diagnostic
+    internal: true
     lambda: |-
       if (!id(sensor_power).state) return NAN;
 
@@ -375,7 +378,8 @@ sensor:
   # 2.6 Calibrated water depth from well head (m)
   - platform: template
     id: water_depth_from_head
-    name: "${friendly_name} Level from Well Head"
+    name: "Depth Below Head"
+    icon: "mdi:arrow-down"
     unit_of_measurement: "m"
     device_class: distance
     state_class: measurement
@@ -417,10 +421,11 @@ sensor:
 
       return depth_from_head;
 
-  # 2.7 Water depth from ground surface (m)
+  # 2.7 Water depth below surface (m)
   - platform: template
-    id: water_depth_from_ground
-    name: "${friendly_name} Level from Ground"
+    id: water_depth_from_surface
+    name: "Depth Below Surface"
+    icon: "mdi:arrow-down"
     unit_of_measurement: "m"
     device_class: distance
     state_class: measurement
@@ -432,21 +437,22 @@ sensor:
           if (isnan(x)) return {};
           return x;
     lambda: |-
-      float depth_head = id(water_depth_from_head).state;       // m below well head
-      float ground_to_head = id(cfg_ground_to_wellhead).state;  // m (ground -> well head)
+      float depth_head = id(water_depth_from_head).state;          // m below well head
+      float surface_to_head = id(cfg_surface_to_well_head).state;  // m (surface down to well head)
 
-      if (isnan(depth_head) || isnan(ground_to_head)) {
+      if (isnan(depth_head) || isnan(surface_to_head)) {
         return NAN;
       }
 
-      // Depth below ground surface
-      float depth_from_ground = depth_head - ground_to_head;
-      return depth_from_ground;
+      // Depth below surface = depth below head + head depth below surface
+      float depth_from_surface = depth_head + surface_to_head;
+      return depth_from_surface;
 
   # 2.8 Water height above pump 1 (m), positive = pump submerged
   - platform: template
     id: water_over_pump1
-    name: "${friendly_name} Height Above Pump 1"
+    name: "Over Pump 1"
+    icon: "mdi:pump"
     unit_of_measurement: "m"
     device_class: distance
     state_class: measurement
@@ -468,7 +474,8 @@ sensor:
   # 2.9 Water height above pump 2 (m)
   - platform: template
     id: water_over_pump2
-    name: "${friendly_name} Height Above Pump 2"
+    name: "Over Pump 2"
+    icon: "mdi:pump"
     unit_of_measurement: "m"
     device_class: distance
     state_class: measurement
@@ -494,7 +501,7 @@ sensor:
 binary_sensor:
   - platform: template
     id: water_sensor_error
-    name: "${friendly_name} Sensor Error"
+    name: "Sensor Error"
     device_class: problem
     entity_category: diagnostic
     lambda: |-
