@@ -350,6 +350,8 @@ sensor:
     id: water_depth_from_head
     name: "${friendly_name} Water Level from Well Head"
     unit_of_measurement: "m"
+    device_class: distance
+    state_class: measurement
     accuracy_decimals: 3
     icon: "mdi:waves"
     update_interval: ${sensor_update_sec}s
@@ -393,6 +395,8 @@ sensor:
     id: water_depth_from_ground
     name: "${friendly_name} Water Level from Ground"
     unit_of_measurement: "m"
+    device_class: distance
+    state_class: measurement
     accuracy_decimals: 3
     icon: "mdi:waves-arrow-up"
     update_interval: ${sensor_update_sec}s
@@ -417,6 +421,8 @@ sensor:
     id: water_over_pump1
     name: "${friendly_name} Water Height Above Pump 1"
     unit_of_measurement: "m"
+    device_class: distance
+    state_class: measurement
     accuracy_decimals: 3
     icon: "mdi:pump"
     update_interval: ${sensor_update_sec}s
@@ -437,6 +443,8 @@ sensor:
     id: water_over_pump2
     name: "${friendly_name} Water Height Above Pump 2"
     unit_of_measurement: "m"
+    device_class: distance
+    state_class: measurement
     accuracy_decimals: 3
     icon: "mdi:pump"
     update_interval: ${sensor_update_sec}s
