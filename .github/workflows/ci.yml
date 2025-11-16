@@ -66,12 +66,16 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
       
+    - name: Create markdownlint config
+      run: |
+        cat > .markdownlint.json << 'EOF'
+        {
+          "line-length": { "line_length": 120 },
+          "no-inline-html": false
+        }
+        EOF
+        
     - name: Lint README
       uses: DavidAnson/markdownlint-cli2-action@v14
       with:
         globs: '**/*.md'
-        config: |
-          {
-            "line-length": { "line_length": 120 },
-            "no-inline-html": false
-          }

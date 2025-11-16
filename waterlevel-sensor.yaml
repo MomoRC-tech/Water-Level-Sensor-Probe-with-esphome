@@ -71,7 +71,7 @@ switch:
     icon: "mdi:power-sleep"
     entity_category: config
     optimistic: true
-    restore_state: true
+    restore_mode: RESTORE_DEFAULT_OFF
     turn_on_action:
       - deep_sleep.prevent: main_deep_sleep
     turn_off_action:
