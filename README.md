@@ -14,10 +14,11 @@ Monitor a well (e.g. for a heat pump supply) using a 4–20 mA submersible press
 9. Computed / Diagnostic Entities
 10. Error Detection
 11. Installation & Commissioning
-12. YAML Configuration Reference
-13. ASCII Wiring Diagram (Detailed)
-14. Extension Ideas
-15. License & Disclaimer
+12. Local Testing
+13. YAML Configuration Reference
+14. ASCII Wiring Diagram (Detailed)
+15. Extension Ideas
+16. License & Disclaimer
 
 ---
 ## 1. Goals & Features
@@ -118,14 +119,31 @@ Enable HA switch “Deep Sleep Disable” → `deep_sleep.prevent`. Device remai
 ---
 ## 11. Installation & Commissioning
 1. Assemble hardware; ensure common ground between 24 V and 5 V.
-2. Adjust `wifi_ssid` / `wifi_password` substitutions.
+2. Create `secrets.yaml` with your Wi-Fi credentials (see below).
 3. Add `waterlevel-sensor.yaml` to ESPHome dashboard.
-4. Flash via USB (initial) then OTA subsequent updates.
-5. In HA, tune geometry numbers, shunt resistance, filter window.
-6. Set calibration after stable readings (avoid using warmup phase values).
-7. Optional: add series resistor + capacitor for noise reduction.
+4. **Test locally first** (see Testing section below).
+5. Flash via USB (initial) then OTA subsequent updates.
+6. In HA, tune geometry numbers, shunt resistance, filter window.
+7. Set calibration after stable readings (avoid using warmup phase values).
+8. Optional: add series resistor + capacitor for noise reduction.
 
 Calibration tip: Use known low/high water states or a reference measurement (manual probe). Record stable currents and depths before entering them.
+
+### Local Testing (Before Flashing)
+Run local validation to catch errors before flashing:
+
+**Windows (PowerShell):**
+```powershell
+.\test-local.ps1
+```
+
+**Linux/macOS (Bash):**
+```bash
+chmod +x test-local.sh
+./test-local.sh
+```
+
+This validates YAML syntax, checks ESPHome configuration, and test-compiles the firmware.
 
 ---
 ## 12. YAML Configuration Reference (Excerpt)
@@ -150,7 +168,36 @@ switch:
 Filtering, calibration, error logic implemented via template sensors (see file for full details).
 
 ---
-## 13. ASCII Wiring Diagram (Detailed)
+## 13. Local Testing
+Before committing or flashing, validate your configuration locally:
+
+**Windows:**
+```powershell
+.\test-local.ps1
+```
+
+**Linux/macOS:**
+```bash
+chmod +x test-local.sh
+./test-local.sh
+```
+
+**What it tests:**
+- Python and ESPHome installation
+- YAML syntax validation
+- ESPHome config validation
+- Full firmware compilation
+- README and LICENSE checks
+- Git status
+
+**Creating a secrets.yaml for testing:**
+```yaml
+wifi_ssid: "YourNetworkName"
+wifi_password: "YourPassword"
+```
+
+---
+## 14. ASCII Wiring Diagram (Detailed)
 ```
 										HOUSE / BASEMENT
 					┌─────────────────────────────────────┐
@@ -214,7 +261,7 @@ Filtering, calibration, error logic implemented via template sensors (see file f
 - 100 nF–1 µF capacitor measurement point to GND (analog low-pass)
 
 ---
-## 14. Extension Ideas
+## 15. Extension Ideas
 - Adaptive `sleep_duration` when level changes rapidly
 - Alerts (persistent notifications) on low/high thresholds
 - Historical storage (InfluxDB / Long-Term Statistics)
@@ -222,7 +269,7 @@ Filtering, calibration, error logic implemented via template sensors (see file f
 - Even lower power: external logic to hard-cut 24 V supply outside measurement window
 
 ---
-## 15. License & Disclaimer
+## 16. License & Disclaimer
 License: See `LICENSE`.
 
 Disclaimer: Use at your own risk. Mains / higher voltage supply handling only by qualified persons. Ensure safe operation of 24 V components and waterproof integrity of downhole cabling.
