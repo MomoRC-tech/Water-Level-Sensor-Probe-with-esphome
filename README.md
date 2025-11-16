@@ -1,4 +1,4 @@
-# Well Water Level Monitoring (TL‑136 + ESP8266 + ESPHome)
+# Well Water Level Monitoring (TL‑136 + ESP8266/ESP32 + ESPHome)
 
 Monitor a well (e.g. heat‑pump supply) with a 4–20 mA TL‑136 submersible pressure sensor and an ESP8266 D1 mini running ESPHome. Data flows into Home Assistant for visualization, alerts, and automations.
 
