@@ -56,7 +56,7 @@ output:
   - platform: gpio
     pin: D5              # D5 (GPIO14) -> relay IN
     id: sensor_power_out
-    inverted: true       # Many relay boards: LOW = on, HIGH = off
+    inverted: false       # Many relay boards: LOW = on, HIGH = off
 
 switch:
   # Relay powering the sensor
