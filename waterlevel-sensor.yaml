@@ -210,7 +210,11 @@ number:
     entity_category: config
     optimistic: true
     restore_value: true
-    initial_value: 1.0
+    # For a 5 m span sensor with sensor mounted 5 m below well head:
+    #   4 mA (dry)  -> depth = 5.0 m (head_to_sensor)
+    #   20 mA (full)-> depth = 0.0 m (head_to_sensor - span)
+    # Adjust after setting head_to_sensor or cfg_sensor_span_m.
+    initial_value: 0.0
     min_value: 0.0
     max_value: 50.0
     step: 0.01
