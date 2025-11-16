@@ -134,13 +134,13 @@ Run local validation to catch errors before flashing:
 
 **Windows (PowerShell):**
 ```powershell
-.\test-local.ps1
+./scripts/test-local.ps1
 ```
 
 **Linux/macOS (Bash):**
 ```bash
-chmod +x test-local.sh
-./test-local.sh
+chmod +x scripts/test-local.sh
+./scripts/test-local.sh
 ```
 
 This validates YAML syntax, checks ESPHome configuration, and test-compiles the firmware.
@@ -173,13 +173,13 @@ Before committing or flashing, validate your configuration locally:
 
 **Windows:**
 ```powershell
-.\test-local.ps1
+./scripts/test-local.ps1
 ```
 
 **Linux/macOS:**
 ```bash
-chmod +x test-local.sh
-./test-local.sh
+chmod +x scripts/test-local.sh
+./scripts/test-local.sh
 ```
 
 **What it tests:**

@@ -1,5 +1,5 @@
 substitutions:
-  devicename: water_level_sensor
+  devicename: water-level-sensor
   friendly_name: "WaterLevel"
   sensor_update_sec: "5.0"   # Measurement interval in seconds
 
@@ -33,7 +33,7 @@ wifi:
   password: !secret wifi_password
   ap:
     ssid: "${friendly_name} Fallback"
-    password: "fallback1234"  # Optional: move to !secret fallback_ap_password
+    password: !secret ap_password
 
 captive_portal:
 

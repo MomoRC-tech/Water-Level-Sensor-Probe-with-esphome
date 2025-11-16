@@ -4,7 +4,8 @@
 
 set -e
 
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Resolve project root from within scripts/ directory
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TESTS_PASSED=0
 TESTS_FAILED=0
 
@@ -96,7 +97,7 @@ test_step "ESPHome Compilation Test" "
 # Test 8: README check
 test_step "README Validation" "
     cd '$PROJECT_ROOT'
-    if [ -f README.md ] && [ \$(wc -c < README.md) -gt 100 ]; then
+    if [ -f README.md ] && [ $(wc -c < README.md) -gt 100 ]; then
         echo '    README.md looks good'
         exit 0
     else
@@ -121,7 +122,7 @@ fi
 # Test 10: Git status
 test_step "Git Status Check" "
     cd '$PROJECT_ROOT'
-    if [ -n \"\$(git status --porcelain 2>/dev/null)\" ]; then
+    if [ -n \"$(git status --porcelain 2>/dev/null)\" ]; then
         echo '    WARNING: Uncommitted changes detected:'
         git status --short
     else
