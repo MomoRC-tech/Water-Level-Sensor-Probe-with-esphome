@@ -19,6 +19,8 @@ Monitor a well (e.g. heat‑pump supply) with a 4–20 mA TL‑136 submersible p
 - Flexible setup: all geometry, calibration, and filtering are configurable from HA (no reflashing).
 - Safety: error sensor flags implausible shunt voltage range.
 
+![Well geometry and reference depths (cfg_* and water_* entities)](installation.PNG)
+
 What you get
 - Sensor power only when needed (relay switches the 24 V supply)
 - Two‑point linear calibration (mA → depth), with robust fallback
@@ -121,21 +123,21 @@ Depth semantics
 
 Accurate measurement relies on calibrating two points:
 
-1. **Dry Reading:**  
+1. Dry Reading:
    - Hang the probe in air, fully dry (not submersed).
-   - Wait for the `loop_current_raw` signal to stabilize and record the current (e.g. `4.35 mA`).  
-   - This is your 0.00 m ("dry") calibration.
+   - Wait for the `loop_current_raw` signal to stabilize and record the current (e.g. 4.35 mA).
+   - This is your 0.00 m ("dry") calibration.
 
-2. **Wet/Depth Reading:**  
-   - Mark the probe's cable at a known distance (D) from tip (ideally 2–5 m, the greater the better).
+2. Wet/Depth Reading:
+   - Mark the probe's cable at a known distance (D) from tip (ideally 2–5 m, the greater the better).
    - Submerge the probe until the mark is exactly at water level.
-   - Wait for `loop_current_raw` to stabilize and record the current (e.g. `12.3 mA`).  
+   - Wait for `loop_current_raw` to stabilize and record the current (e.g. 12.3 mA).
    - This is your D-meter ("wet") calibration.
 
-Enter both current and depth values into the Home Assistant config (`cfg_cal*_current_mA`, `cfg_cal*_depth_m`).  
+Enter both current and depth values into the Home Assistant config (`cfg_cal*_current_mA`, `cfg_cal*_depth_m`).
 After saving, your water level readings will update accurately.
 
-**Tip:** For highest accuracy, use a large D and measure carefully. If wiring or shunt resistor changes, repeat calibration.
+Tip: For highest accuracy, use a large D and measure carefully. If wiring or shunt resistor changes, repeat calibration.
 
 Defect / disconnect detection
 - Readings with loop current < 4 mA (below nominal 4–20 mA range) are treated as invalid and user-facing level sensors publish no value (suppressed as NaN).
