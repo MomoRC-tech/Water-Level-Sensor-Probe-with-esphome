@@ -1,6 +1,6 @@
 # Well Water Level Monitoring (TL‑136 + ESP8266/ESP32 + ESPHome)
 
-Monitor a well (e.g. heat‑pump supply) with a 4–20 mA TL‑136 submersible pressure sensor and an ESP8266 D1 mini running ESPHome. Data flows into Home Assistant for visualization, alerts, and automations.
+Monitor a well (e.g. heat‑pump supply) with a 4–20 mA TL‑136 submersible pressure sensor and an ESP8266 D1 mini running ESPHome. Data flows into Home Assistant for visualization, alerts, and level-based automation (e.g. heat pump interlocks). Designed for reliability, easy calibration, and low long-term power drain.
 
 ## Table of Contents
 - [Overview](#overview)
@@ -117,18 +117,25 @@ Depth semantics
 - "Depth Below Surface" (`water_depth_from_surface`) = Depth Below Head + Surface→Head (the fixed offset `cfg_surface_to_well_head`).
 - Positive values mean the water surface lies below the reference (head or ground surface). Invalid / unavailable readings publish as no value (NaN).
 
-Calibration
-- Provide two known pairs: (current mA, depth m from well head).
-- Validated: current delta > 0.1 mA, depth delta > 0.01 m, finite values.
-- If invalid, falls back to configured sensor span (`cfg_sensor_span_m` column → depth by geometry).
+## Calibration (Quick Guide)
 
-Example (factory TL‑136, span 5.0 m, sensor mounted 5.0 m below well head)
-| Condition | Loop current | Water column above sensor | Depth from well head |
-|-----------|--------------|---------------------------|----------------------|
-| Dry (top of water at sensor) | ~4.00 mA | 0.0 m | 5.0 m (head_to_sensor) |
-| Full span | ~20.00 mA | 5.0 m | 0.0 m (head_to_sensor - span) |
+Accurate measurement relies on calibrating two points:
 
-Set calibration point 1 to (4.00 mA, 5.0 m) and point 2 to (20.00 mA, 0.0 m), then adjust after confirming stable readings.
+1. **Dry Reading:**  
+   - Hang the probe in air, fully dry (not submersed).
+   - Wait for the `loop_current_raw` signal to stabilize and record the current (e.g. `4.35 mA`).  
+   - This is your 0.00 m ("dry") calibration.
+
+2. **Wet/Depth Reading:**  
+   - Mark the probe's cable at a known distance (D) from tip (ideally 2–5 m, the greater the better).
+   - Submerge the probe until the mark is exactly at water level.
+   - Wait for `loop_current_raw` to stabilize and record the current (e.g. `12.3 mA`).  
+   - This is your D-meter ("wet") calibration.
+
+Enter both current and depth values into the Home Assistant config (`cfg_cal*_current_mA`, `cfg_cal*_depth_m`).  
+After saving, your water level readings will update accurately.
+
+**Tip:** For highest accuracy, use a large D and measure carefully. If wiring or shunt resistor changes, repeat calibration.
 
 Defect / disconnect detection
 - Readings with loop current < 4 mA (below nominal 4–20 mA range) are treated as invalid and user-facing level sensors publish no value (suppressed as NaN).
@@ -188,99 +195,99 @@ Filtering, calibration, and error logic are implemented via template sensors in 
 
 High‑side wiring (default — switching 5 V feed to boost)
 ```
-							HOUSE / BASEMENT
-					┌─────────────────────────────────────┐
-					│                                     │
-					│  5V SUPPLY / USB                    │
-					│      +5V ───┐                       │
-					│             │                       │
-					│         ┌───┴───────┐               │
-					│         │  RELAY    │ (1‑ch, 5 V)   │
-					│         │  COM      │               │
-					│         │           │               │
-					│         │  NO ────────────► Boost Vin+ ───► 24V+ ─── Cable 1 ───► Sensor (+)
-					│         └───────────┘               │
-					│             │                       │
-					│            GND ─────────────────────┬───────────────┐
-					│                                     │               │
-					│                             150 Ω shunt             │
-					│                        (≥0.25 W)  ┌───────┐         │
-					│                                   │       │         │
-					│  Sensor (−) ── Cable 2 ───────────┘       │         │
-					│                                           ▼         │
-					│                                Measurement node     │
-					│                                | | 1 kΩ series → A0 │
-					│                                | | 100 nF–1 µF → GND│
-					│                                                GND  │
-					│          D1 MINI (ESP8266)                       │  │
-					│      5V_in  ◄─────────────── (same +5V)          │  │
-					│      GND    ─────────────────────────────────────┘  │
-					│      D5 (GPIO14) ─────► Relay IN                      │
-					│      5V          ─────► Relay VCC                     │
-					│      GND         ─────► Relay GND                     │
-					└─────────────────────────────────────┘
+											HOUSE / BASEMENT
+											┌─────────────────────────────────────┐
+											│                                     │
+											│  5V SUPPLY / USB                    │
+											│      +5V ───┐                       │
+											│             │                       │
+											│         ┌───┴───────┐               │
+											│         │  RELAY    │ (1‑ch, 5 V)   │
+											│         │  COM      │               │
+											│         │           │               │
+											│         │  NO ────────────► Boost Vin+ ───► 24V+ ─── Cable 1 ───► Sensor (+)
+											│         └───────────┘               │
+											│             │                       │
+											│            GND ─────────────────────┬───────────────┐
+											│                                     │               │
+											│                             150 Ω shunt             │
+											│                        (≥0.25 W)  ┌───────┐         │
+											│                                   │       │         │
+											│  Sensor (−) ── Cable 2 ───────────┘       │         │
+											│                                           ▼         │
+											│                                Measurement node     │
+											│                                | | 1 kΩ series → A0 │
+											│                                | | 100 nF–1 µF → GND│
+											│                                                GND  │
+											│          D1 MINI (ESP8266)                       │  │
+											│      5V_in  ◄─────────────── (same +5V)          │  │
+											│      GND    ─────────────────────────────────────┘  │
+											│      D5 (GPIO14) ─────► Relay IN                      │
+											│      5V          ─────► Relay VCC                     │
+											│      GND         ─────► Relay GND                     │
+											└─────────────────────────────────────┘
 
-							WELL SHAFT
-					┌─────────────────────────────────────┐
-					│        TL‑136 LEVEL SENSOR          │
-					│      (+)  ◄────────── Cable 1       │
-					│      (−)  ───────────► Cable 2      │
-					└─────────────────────────────────────┘
+															WELL SHAFT
+											┌─────────────────────────────────────┐
+											│        TL‑136 LEVEL SENSOR          │
+											│      (+)  ◄────────── Cable 1       │
+											│      (−)  ───────────► Cable 2      │
+											└─────────────────────────────────────┘
 ```
 
 <details>
 <summary>Low‑side wiring (alternative) — click to expand</summary>
 
 ```
-										HOUSE / BASEMENT
-					┌─────────────────────────────────────┐
-					│                                     │
-					│            24V SUPPLY               │
-					│                                     │
-					│      +24V ──────┐                   │
-					│                 │                   │
-					│                 │      RELAY MODULE │
-					│                 │      (1-ch, 5 V)  │
-					│                 │                   │
-					│             ┌───┴───────┐           │
-					│             │   COM     │           │
-					│             │           │           │
-					│             │   NO ───────────── Cable 1 ─────► down to well
-					│             │           │           │
-					│             └───────────┘           │
-					│                 │                   │
-					│                GND ──────┐          │
-					│                          │          │
-					│        SHUNT 150 Ω       │          │
-					│         (≥0.25 W)        │          │
-					│                          │          │
-					│   24V-GND ──────┤◄───[ R_shunt ]─── Cable 2 ◄──── from well
-					│                          │
-					│                          └───► Measurement point → D1 mini A0
-					│                                     │
-					│                                     │
-					│          D1 MINI (ESP8266)          │
-					│                                     │
-					│     5V_in  ◄── 5V supply / USB      │
-					│     GND    ──────────────┬──────────┘
-					│                          │ (shared ground with 24V-GND)
-					│     A0   ◄───────────────┘ (top end of shunt)
-					│
-					│     D5 (GPIO14) ─────► Relay IN
-					│     5V          ─────► Relay VCC
-					│     GND         ─────► Relay GND
-					│
-					└─────────────────────────────────────┘
+											HOUSE / BASEMENT
+											┌─────────────────────────────────────┐
+											│                                     │
+											│            24V SUPPLY               │
+											│                                     │
+											│      +24V ──────┐                   │
+											│                 │                   │
+											│                 │      RELAY MODULE │
+											│                 │      (1-ch, 5 V)  │
+											│                 │                   │
+											│             ┌───┴───────┐           │
+											│             │   COM     │           │
+											│             │           │           │
+											│             │   NO ───────────── Cable 1 ─────► down to well
+											│             │           │           │
+											│             └───────────┘           │
+											│                 │                   │
+											│                GND ──────┐          │
+											│                          │          │
+											│        SHUNT 150 Ω       │          │
+											│         (≥0.25 W)        │          │
+											│                          │          │
+											│   24V-GND ──────┤◄───[ R_shunt ]─── Cable 2 ◄──── from well
+											│                          │
+											│                          └───► Measurement point → D1 mini A0
+											│                                     │
+											│                                     │
+											│          D1 MINI (ESP8266)          │
+											│                                     │
+											│     5V_in  ◄── 5V supply / USB      │
+											│     GND    ──────────────┬──────────┘
+											│                          │ (shared ground with 24V-GND)
+											│     A0   ◄───────────────┘ (top end of shunt)
+											│
+											│     D5 (GPIO14) ─────► Relay IN
+											│     5V          ─────► Relay VCC
+											│     GND         ─────► Relay GND
+											│
+											└─────────────────────────────────────┘
 
-										WELL SHAFT
-					┌─────────────────────────────────────┐
-					│                                     │
-					│        TL-136 LEVEL SENSOR          │
-					│                                     │
-					│      (+)  ◄────────── Cable 1       │
-					│      (-)  ───────────► Cable 2      │
-					│                                     │
-					└─────────────────────────────────────┘
+															WELL SHAFT
+											┌─────────────────────────────────────┐
+											│                                     │
+											│        TL-136 LEVEL SENSOR          │
+											│                                     │
+											│      (+)  ◄────────── Cable 1       │
+											│      (-)  ───────────► Cable 2      │
+											│                                     │
+											└─────────────────────────────────────┘
 ```
 
 </details>
