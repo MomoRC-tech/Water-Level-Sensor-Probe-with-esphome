@@ -19,7 +19,9 @@ Monitor a well (e.g. heat‑pump supply) with a 4–20 mA TL‑136 submersible p
 - Flexible setup: all geometry, calibration, and filtering are configurable from HA (no reflashing).
 - Safety: error sensor flags implausible shunt voltage range.
 
-![Well geometry and reference depths (cfg_* and water_* entities)](installation.PNG)
+<p align="center">
+  <img src="installation.PNG" alt="Well geometry and reference depths (cfg_* and water_* entities)" width="400">
+</p>
 
 What you get
 - Sensor power only when needed (relay switches the 24 V supply)
