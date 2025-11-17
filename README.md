@@ -195,98 +195,99 @@ Filtering, calibration, and error logic are implemented via template sensors in 
 
 High‑side wiring (default — switching 5 V feed to boost)
 ```
-						H HOUSE / BASEMENT
-				╔═════════════════════════════════════╗
-				║                                     ║
-				║  5V SUPPLY / USB                    ║
-				║      +5V ───┐                       ║
-				║             │                       ║
-				║         ╔═══╩═══════╗               ║
-				║         ║  RELAY    ║ (1‑ch, 5 V)   ║
-				║         ║  COM      ║               ║
-				║         ║           ║               ║
-				║         ║  NO ────────────► Boost Vin+ ───► 24V+ ─── Cable 1 ───► Sensor (+)
-				║         ╚═══════════╝               ║
-				║             │                       ║
-				║            GND ─────────────────────┬───────────────┐
-				║                                     ║               ║
-				║                             150 Ω shunt             ║
-				║                        (≥0.25 W)  ╔═══════════════╗║
-				║                                   ║       ║       ║║
-				║  Sensor (−) ── Cable 2 ───────────╩       ║       ║║
-				║                                           ▼         ║
-				║                                Measurement node     ║
-				║                                | | 1 kΩ series → A0 ║
-				║                                | | 100 nF–1 µF → GND║
-				║                                                GND  ║
-				║          D1 MINI (ESP8266)                       ║  ║
-				║      5V_in  ◄─────────────── (same +5V)          ║  ║
-				║      GND    ─────────────────────────────────────┘  ║
-				║      D5 (GPIO14) ─────► Relay IN                      ║
-				║      5V          ─────► Relay VCC                     ║
-				║      GND         ─────► Relay GND                     ║
-				╚═════════════════════════════════════╝
+                            HOUSE / BASEMENT
+                    ┌─────────────────────────────────────┐
+                    │                                     │
+                    │  5V SUPPLY / USB                    │
+                    │      +5V ───┐                       │
+                    │             │                       │
+                    │         ┌───┴───────┐               │
+                    │         │  RELAY    │ (1‑ch, 5 V)   │
+                    │         │  COM      │               │
+                    │         │           │               │
+                    │         │  NO ────────────► Boost Vin+ ───► 24V+ ─── Cable 1 ───► Sensor (+)
+                    │         └───────────┘               │
+                    │             │                       │
+                    │            GND ─────────────────────┬───────────────┐
+                    │                                     │               │
+                    │                             150 Ω shunt             │
+                    │                        (≥0.25 W)  ┌───────┐         │
+                    │                                   │       │         │
+                    │  Sensor (−) ── Cable 2 ───────────┘       │         │
+                    │                                           ▼         │
+                    │                                Measurement node     │
+                    │                                | | 1 kΩ series → A0 │
+                    │                                | | 100 nF–1 µF → GND│
+                    │                                                GND  │
+                    │          D1 MINI (ESP8266)                       │  │
+                    │      5V_in  ◄─────────────── (same +5V)          │  │
+                    │      GND    ─────────────────────────────────────┘  │
+                    │      D5 (GPIO14) ─────► Relay IN                      │
+                    │      5V          ─────► Relay VCC                     │
+                    │      GND         ─────► Relay GND                     │
+                    └─────────────────────────────────────┘
 
-						WELL SHAFT
-				╔═════════════════════════════════════╗
-				║        TL‑136 LEVEL SENSOR          ║
-				║      (+)  ◄────────── Cable 1       ║
-				║      (−)  ───────────► Cable 2      ║
-				╚═════════════════════════════════════╝
+                            WELL SHAFT
+                    ┌─────────────────────────────────────┐
+                    │        TL‑136 LEVEL SENSOR          │
+                    │      (+)  ◄────────── Cable 1       │
+                    │      (−)  ───────────► Cable 2      │
+                    └─────────────────────────────────────┘
 ```
 
 <details>
 <summary>Low‑side wiring (alternative) — click to expand</summary>
 
 ```
-						H HOUSE / BASEMENT
-				╔═════════════════════════════════════╗
-				║                                     ║
-				║            24V SUPPLY               ║
-				║                                     ║
-				║      +24V ──────┐                   ║
-				║                 │                   ║
-				║                 │      RELAY MODULE │
-				║                 │      (1-ch, 5 V)  ║
-				║                 │                   ║
-				║             ╔═══╩═══════╗           ║
-				║             ║   COM     ║           ║
-				║             ║           ║           ║
-				║             ║   NO ───────────── Cable 1 ─────► down to well
-				║             ║           ║           ║
-				║             ╚═══════════╝           ║
-				║                 │                   ║
-				║                GND ──────┐          ║
-				║                          │          ║
-				║        SHUNT 150 Ω       ║          ║
-				║         (≥0.25 W)        ║          ║
-				║                          │          ║
-				║   24V-GND ──────┤◄───[ R_shunt ]─── Cable 2 ◄──── from well
-				║                          │
-				║                          └───► Measurement point → D1 mini A0
-				║                                     │
-				║                                     │
-				║          D1 MINI (ESP8266)          ║
-				║                                     ║
-				║     5V_in  ◄── 5V supply / USB      ║
-				║     GND    ──────────────┬──────────┘
-				║                          │ (shared ground with 24V-GND)
-				║     A0   ◄───────────────┘ (top end of shunt)
-				║
-				║     D5 (GPIO14) ─────► Relay IN
-				║     5V          ─────► Relay VCC
-				║     GND         ─────► Relay GND
-				╚═════════════════════════════════════╝
+                                        HOUSE / BASEMENT
+                    ┌─────────────────────────────────────┐
+                    │                                     │
+                    │            24V SUPPLY               │
+                    │                                     │
+                    │      +24V ──────┐                   │
+                    │                 │                   │
+                    │                 │      RELAY MODULE │
+                    │                 │      (1-ch, 5 V)  │
+                    │                 │                   │
+                    │             ┌───┴───────┐           │
+                    │             │   COM     │           │
+                    │             │           │           │
+                    │             │   NO ───────────── Cable 1 ─────► down to well
+                    │             │           │           │
+                    │             └───────────┘           │
+                    │                 │                   │
+                    │                GND ──────┐          │
+                    │                          │          │
+                    │        SHUNT 150 Ω       │          │
+                    │         (≥0.25 W)        │          │
+                    │                          │          │
+                    │   24V-GND ──────┤◄───[ R_shunt ]─── Cable 2 ◄──── from well
+                    │                          │
+                    │                          └───► Measurement point → D1 mini A0
+                    │                                     │
+                    │                                     │
+                    │          D1 MINI (ESP8266)          │
+                    │                                     │
+                    │     5V_in  ◄── 5V supply / USB      │
+                    │     GND    ──────────────┬──────────┘
+                    │                          │ (shared ground with 24V-GND)
+                    │     A0   ◄───────────────┘ (top end of shunt)
+                    │
+                    │     D5 (GPIO14) ─────► Relay IN
+                    │     5V          ─────► Relay VCC
+                    │     GND         ─────► Relay GND
+                    │
+                    └─────────────────────────────────────┘
 
-						WELL SHAFT
-				╔═════════════════════════════════════╗
-				║                                     ║
-				║        TL-136 LEVEL SENSOR          ║
-				║                                     ║
-				║      (+)  ◄────────── Cable 1       ║
-				║      (-)  ───────────► Cable 2      ║
-				║                                     ║
-				╚═════════════════════════════════════╝
+                                        WELL SHAFT
+                    ┌─────────────────────────────────────┐
+                    │                                     │
+                    │        TL-136 LEVEL SENSOR          │
+                    │                                     │
+                    │      (+)  ◄────────── Cable 1       │
+                    │      (-)  ───────────► Cable 2      │
+                    │                                     │
+                    └─────────────────────────────────────┘
 ```
 
 </details>
