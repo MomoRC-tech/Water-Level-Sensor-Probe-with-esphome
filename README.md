@@ -20,7 +20,7 @@ Monitor a well (e.g. heat‑pump supply) with a 4–20 mA TL‑136 submersible p
 - Safety: error sensor flags implausible shunt voltage range.
 
 <p align="center">
-  <img src="installation.PNG" alt="Well geometry and reference depths (cfg_* and water_* entities)" width="400">
+  <img src="installation.PNG" alt="Well geometry and reference depths (cfg_* and water_* entities)" width="600">
 </p>
 
 What you get
