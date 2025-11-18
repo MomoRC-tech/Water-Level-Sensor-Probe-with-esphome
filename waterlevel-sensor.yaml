@@ -384,7 +384,6 @@ sensor:
     device_class: distance
     state_class: measurement
     accuracy_decimals: 3
-    icon: "mdi:waves"
     update_interval: ${sensor_update_sec}s
     filters:
       - lambda: |-
@@ -400,11 +399,26 @@ sensor:
       float i2 = id(cfg_cal2_current_mA).state;
       float d1 = id(cfg_cal1_depth_m).state;
       float d2 = id(cfg_cal2_depth_m).state;
+      float span = id(cfg_sensor_span_m).state;
+      float d_sensor = id(cfg_head_to_sensor).state;
 
       bool calib_valid = true;
       if (isnan(i1) || isnan(i2) || isnan(d1) || isnan(d2)) calib_valid = false;
       if (fabs(i2 - i1) < 0.1f) calib_valid = false;
       if (fabs(d2 - d1) < 0.01f) calib_valid = false;
+
+      // Validate calibration depths are within sensor's measurable depth-from-head range
+      // Depth Below Head range: [head_to_sensor - span, head_to_sensor]
+      if (isnan(span) || span <= 0.0f) span = 5.0f;
+      if (isnan(d_sensor)) calib_valid = false;
+      if (calib_valid) {
+        float min_depth = d_sensor - span;
+        float max_depth = d_sensor;
+        // Allow tiny epsilon
+        const float eps = 0.001f;
+        if (d1 < (min_depth - eps) || d1 > (max_depth + eps)) calib_valid = false;
+        if (d2 < (min_depth - eps) || d2 > (max_depth + eps)) calib_valid = false;
+      }
 
       float depth_from_head;
 
@@ -415,7 +429,6 @@ sensor:
         // Fallback: theoretical sensor curve (0..sensor span column above sensor)
         float h_over_sensor = id(sensor_column_filtered_m).state;
         if (isnan(h_over_sensor)) return NAN;
-        float d_sensor = id(cfg_head_to_sensor).state;
         depth_from_head = d_sensor - h_over_sensor;
       }
 
@@ -430,7 +443,6 @@ sensor:
     device_class: distance
     state_class: measurement
     accuracy_decimals: 3
-    icon: "mdi:waves-arrow-up"
     update_interval: ${sensor_update_sec}s
     filters:
       - lambda: |-
@@ -457,7 +469,6 @@ sensor:
     device_class: distance
     state_class: measurement
     accuracy_decimals: 3
-    icon: "mdi:pump"
     update_interval: ${sensor_update_sec}s
     filters:
       - lambda: |-
@@ -480,7 +491,6 @@ sensor:
     device_class: distance
     state_class: measurement
     accuracy_decimals: 3
-    icon: "mdi:pump"
     update_interval: ${sensor_update_sec}s
     filters:
       - lambda: |-
