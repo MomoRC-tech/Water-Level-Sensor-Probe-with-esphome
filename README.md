@@ -194,6 +194,11 @@ alpha = dt / window_s     (dt = update period)
 ```
 Warmup suppresses the first few publishes to avoid skewed initial values.
 
+### Kalman filtering notes
+- `water_depth_from_head_kalman` filters only the computed depth (meters) from the well head.
+- `water_depth_from_surface_kalman` is derived as a template: `head_kalman + cfg_surface_to_well_head`.
+- Rationale: Kalman is translation-invariant; adding a constant offset after filtering is mathematically equivalent to filtering the offset signal, avoids double-filtering/extra lag, and instantly reflects runtime changes to the surface→head offset.
+
 Deep sleep
 - Typical cycle: wake → energize sensor → measure → publish → power off → sleep.
 - Toggle “Deep Sleep Disable” in HA to keep the device awake for OTA/debugging.
@@ -208,7 +213,9 @@ Installation checklist
 ## Diagnostics & Entities
 User‑facing sensors
 - `water_depth_from_head` (Depth Below Head)
+- `water_depth_from_head_kalman` (Depth Below Head — Kalman)
 - `water_depth_from_surface` (Depth Below Surface)
+- `water_depth_from_surface_kalman` (Depth Below Surface — Kalman)
 - `water_over_pump1` (Over Pump 1)
 - `water_over_pump2` (Over Pump 2)
 - `loop_current_filtered` (Loop Current)
