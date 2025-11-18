@@ -488,6 +488,28 @@ sensor:
       float depth_from_surface = depth_head + surface_to_head;
       return depth_from_surface;
 
+  # 2.7b Water depth below surface (Kalman)
+  - platform: template
+    id: water_depth_from_surface_kalman
+    name: "Depth Below Surface (Kalman)"
+    icon: "mdi:arrow-down"
+    unit_of_measurement: "m"
+    device_class: distance
+    state_class: measurement
+    accuracy_decimals: 3
+    update_interval: ${sensor_update_sec}s
+    filters:
+      - lambda: |-
+          if (isnan(x)) return {};
+          return x;
+    lambda: |-
+      float depth_head_k = id(water_depth_from_head_kalman).state;   // m below well head (Kalman)
+      float surface_to_head = id(cfg_surface_to_well_head).state;     // m (surface down to well head)
+      if (isnan(depth_head_k) || isnan(surface_to_head)) {
+        return NAN;
+      }
+      return depth_head_k + surface_to_head;
+
   # 2.8 Water height above pump 1 (m), positive = pump submerged
   - platform: template
     id: water_over_pump1
