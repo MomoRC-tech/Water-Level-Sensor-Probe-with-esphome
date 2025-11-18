@@ -376,23 +376,23 @@ sensor:
       return level;
 
   # 2.6 Calibrated water depth from well head (m)
+  # 2.6a Depth Below Head (raw, unfiltered by Kalman) – keep calibration logic here
+  # Uses filtered loop current for stability; applies two-point calibration when valid,
+  # otherwise falls back to span curve. This serves as the input to the Kalman filter below.
   - platform: template
-    id: water_depth_from_head
-    name: "Depth Below Head"
-    icon: "mdi:arrow-down"
+    id: well_depth_raw
+    name: "Depth Below Head (Raw)"
     unit_of_measurement: "m"
     device_class: distance
     state_class: measurement
     accuracy_decimals: 3
+    entity_category: diagnostic
+    internal: true
     update_interval: ${sensor_update_sec}s
-    filters:
-      - lambda: |-
-          if (isnan(x)) return {};
-          return x;
     lambda: |-
       if (!id(sensor_power).state) return NAN;
 
-      float i = id(loop_current_filtered).state;
+      float i = id(loop_current_filtered).state;  // use EMA-filtered current as measurement
       if (isnan(i)) return NAN;
 
       float i1 = id(cfg_cal1_current_mA).state;
@@ -407,32 +407,60 @@ sensor:
       if (fabs(i2 - i1) < 0.1f) calib_valid = false;
       if (fabs(d2 - d1) < 0.01f) calib_valid = false;
 
-      // Validate calibration depths are within sensor's measurable depth-from-head range
-      // Depth Below Head range: [head_to_sensor - span, head_to_sensor]
+      // Enforce calibration depths within measurable range: [head_to_sensor - span, head_to_sensor]
       if (isnan(span) || span <= 0.0f) span = 5.0f;
       if (isnan(d_sensor)) calib_valid = false;
       if (calib_valid) {
         float min_depth = d_sensor - span;
         float max_depth = d_sensor;
-        // Allow tiny epsilon
         const float eps = 0.001f;
         if (d1 < (min_depth - eps) || d1 > (max_depth + eps)) calib_valid = false;
         if (d2 < (min_depth - eps) || d2 > (max_depth + eps)) calib_valid = false;
       }
 
-      float depth_from_head;
-
       if (calib_valid) {
         float t = (i - i1) / (i2 - i1);
-        depth_from_head = d1 + t * (d2 - d1);
-      } else {
-        // Fallback: theoretical sensor curve (0..sensor span column above sensor)
-        float h_over_sensor = id(sensor_column_filtered_m).state;
-        if (isnan(h_over_sensor)) return NAN;
-        depth_from_head = d_sensor - h_over_sensor;
+        return d1 + t * (d2 - d1);
       }
 
-      return depth_from_head;
+      // Fallback: theoretical sensor curve (0..sensor span column above sensor)
+      float h_over_sensor = id(sensor_column_filtered_m).state;
+      if (isnan(h_over_sensor)) return NAN;
+      return d_sensor - h_over_sensor;
+
+  # 2.6b Published Depth Below Head (backward-compatible): simply expose raw depth
+  - platform: template
+    id: water_depth_from_head
+    name: "Depth Below Head"
+    icon: "mdi:arrow-down"
+    unit_of_measurement: "m"
+    device_class: distance
+    state_class: measurement
+    accuracy_decimals: 3
+    update_interval: ${sensor_update_sec}s
+    filters:
+      - lambda: |-
+          if (isnan(x)) return {};
+          return x;
+    lambda: |-
+      return id(well_depth_raw).state;
+
+  # 2.6c Kalman-filtered Depth Below Head – tunes: process_std_dev (q^0.5), error (r^0.5)
+  - platform: combination
+    type: kalman
+    id: water_depth_from_head_kalman
+    name: "Depth Below Head (Kalman)"
+    unit_of_measurement: "m"
+    device_class: distance
+    state_class: measurement
+    accuracy_decimals: 3
+    icon: "mdi:arrow-down"
+    # Process noise std dev (m per sample). Start with ~0.05 m; increase for faster response.
+    process_std_dev: 0.05
+    sources:
+      # Measurement source and its noise std dev (m). Start with 0.02 m (2 cm).
+      - source: well_depth_raw
+        error: 0.02
 
   # 2.7 Water depth below surface (m)
   - platform: template
