@@ -446,6 +446,10 @@ sensor:
       return id(well_depth_raw).state;
 
   # 2.6c Kalman-filtered Depth Below Head – tunes: process_std_dev (q^0.5), error (r^0.5)
+  # Tuning quick guide:
+  #   - process_std_dev (m per update): 0.02–0.10 typical, up to 0.30 for fast changes.
+  #   - source error (m): 0.01–0.05 typical; start at 0.02.
+  #   - Values are per update; if you change sensor_update_sec, re-tune for similar behavior.
   - platform: combination
     type: kalman
     id: water_depth_from_head_kalman
@@ -455,10 +459,10 @@ sensor:
     state_class: measurement
     accuracy_decimals: 3
     icon: "mdi:arrow-down"
-    # Process noise std dev (m per sample). Start with ~0.05 m; increase for faster response.
+    # Process noise std dev (m per update). Start with ~0.05 m; increase for faster response.
     process_std_dev: 0.05
     sources:
-      # Measurement source and its noise std dev (m). Start with 0.02 m (2 cm).
+      # Measurement source noise std dev (m). Typical 0.01–0.05 m; start with 0.02 m (2 cm).
       - source: well_depth_raw
         error: 0.02
 
@@ -489,6 +493,7 @@ sensor:
       return depth_from_surface;
 
   # 2.7b Water depth below surface (Kalman)
+  # Derived via template from head Kalman + surface offset (translation-invariant); no extra filter.
   - platform: template
     id: water_depth_from_surface_kalman
     name: "Depth Below Surface (Kalman)"
