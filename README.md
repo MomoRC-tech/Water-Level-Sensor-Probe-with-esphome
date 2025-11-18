@@ -123,23 +123,66 @@ Depth semantics
 
 ## Calibration (Quick Guide)
 
-Accurate measurement relies on calibrating two points:
+### Collecting Measurements (Before Calibration)
+Gather these physical measurements once; they define geometry and feed calibration:
+1. Surface → Well Head (`cfg_surface_to_well_head`): Vertical distance from ground surface down to the well head (positive; e.g. 1.00 m if head is 1 m below surface).
+2. Well Head → Sensor (`cfg_head_to_sensor`): Depth of sensor below well head, usually the submerged cable length minus any slack at the top.
+3. Well Head → Pump(s) (`cfg_head_to_pump1`, `cfg_head_to_pump2`): Vertical distance from the well head down to each pump intake (for “Over Pump” height calculations).
+4. Well Head → Bottom (`cfg_head_to_bottom`, optional informational): Depth from well head to bottom of well; not used in current calculations.
+5. Shunt Resistance (`cfg_shunt_resistance_ohm`): Measure actual resistor value with power off; tolerance matters for current accuracy.
+6. Sensor Span (`cfg_sensor_span_m`): Factory range of the pressure sensor (TL‑136 default 5.0 m). Change only if you use a different range probe.
 
-1. Dry Reading:
-   - Hang the probe in air, fully dry (not submersed).
-   - Wait for the `loop_current_raw` signal to stabilize and record the current (e.g. 4.35 mA).
-   - This is your 0.00 m ("dry") calibration.
+### Calibration Strategy
+You need two known (current, depth) pairs referenced to the well head. Depths are always “Depth Below Head”.
+- Point 1 (Near Dry): Water surface at sensor top. Depth Below Head ≈ `head_to_sensor`. Loop current typically ≈ 4.00 mA.
+- Point 2 (Full Span or Known Higher Level): Water column above sensor near the top of sensor’s rated span. For span = 5 m and `head_to_sensor` = 5 m: Depth Below Head ≈ 0.0 m; loop current ≈ 20.00 mA.
 
-2. Wet/Depth Reading:
-   - Mark the probe's cable at a known distance (D) from tip (ideally 2–5 m, the greater the better).
-   - Submerge the probe until the mark is exactly at water level.
-   - Wait for `loop_current_raw` to stabilize and record the current (e.g. 12.3 mA).
-   - This is your D-meter ("wet") calibration.
+If you cannot obtain full span, choose any second stable level significantly different from Point 1 and record its loop current and depth. Ensure:
+- Current difference > 0.1 mA
+- Depth difference > 0.01 m
 
-Enter both current and depth values into the Home Assistant config (`cfg_cal*_current_mA`, `cfg_cal*_depth_m`).
-After saving, your water level readings will update accurately.
+Enter values into `cfg_cal1_current_mA`, `cfg_cal1_depth_m`, `cfg_cal2_current_mA`, `cfg_cal2_depth_m`.
 
-Tip: For highest accuracy, use a large D and measure carefully. If wiring or shunt resistor changes, repeat calibration.
+Range constraint (enforced in firmware)
+- Valid calibration depths must be within the sensor’s measurable “Depth Below Head” range:
+	`[ head_to_sensor - sensor_span , head_to_sensor ]`.
+- If any calibration depth is outside this range, the calibration is ignored and the fallback curve is used.
+
+Fallback behavior
+- If calibration is invalid (bad values or too close), firmware falls back to the theoretical span curve:
+	Depth Below Head = (`head_to_sensor`) − (ColumnAboveSensor).
+
+### Worked Example (Your Setup)
+Assumptions
+- Well head is 1.20 m below the surface ⇒ `cfg_surface_to_well_head = 1.20` m.
+- Sensor is 6.00 m below the well head ⇒ `cfg_head_to_sensor = 6.00` m.
+- Sensor span is 5.00 m (TL‑136 default) ⇒ `cfg_sensor_span_m = 5.00` m.
+
+Measurable depth range (from well head)
+- Min depth = 6.00 − 5.00 = 1.00 m; Max depth = 6.00 m.
+- Calibration depths must be within [1.00 m , 6.00 m].
+
+Choose calibration points
+- Point 1 (near dry): water just at sensor → Depth Below Head = 6.00 m, Current ≈ 4.00 mA.
+- Point 2 (near full span): ≈ 5 m water over sensor → Depth Below Head = 1.00 m, Current ≈ 20.00 mA.
+
+Enter into HA
+- `cfg_cal1_current_mA = 4.00`, `cfg_cal1_depth_m = 6.00`
+- `cfg_cal2_current_mA = 20.00`, `cfg_cal2_depth_m = 1.00`
+
+Cross‑checks
+- Depth Below Surface = Depth Below Head + `cfg_surface_to_well_head` (so add 1.20 m to the above depths if you want surface‑referenced values).
+- If you pick a different second point (not full span), ensure it still lies between 1.00 m and 6.00 m and its current is stable.
+
+### Recommended Order
+1. Set geometry numbers.
+2. Set shunt resistance & sensor span.
+3. Let the device run; confirm stable loop current.
+4. Enter calibration point 1.
+5. Wait for a distinct water level change (or fill) and enter point 2.
+6. Verify Depth sensors show plausible values vs manual measurement.
+
+<!-- Removed older quick guide in favor of the structured Calibration section above -->
 
 Defect / disconnect detection
 - Readings with loop current < 4 mA (below nominal 4–20 mA range) are treated as invalid and user-facing level sensors publish no value (suppressed as NaN).
