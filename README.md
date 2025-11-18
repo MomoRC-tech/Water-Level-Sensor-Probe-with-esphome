@@ -199,6 +199,21 @@ Warmup suppresses the first few publishes to avoid skewed initial values.
 - `water_depth_from_surface_kalman` is derived as a template: `head_kalman + cfg_surface_to_well_head`.
 - Rationale: Kalman is translation-invariant; adding a constant offset after filtering is mathematically equivalent to filtering the offset signal, avoids double-filtering/extra lag, and instantly reflects runtime changes to the surface→head offset.
 
+Tuning (practical starting points)
+- Defaults (good first try): `process_std_dev = 0.05 m`, source `error = 0.02 m` (already set in YAML).
+- Typical well setups:
+        - `process_std_dev`: 0.02–0.10 m per update for smooth, realistic tracking.
+        - Source `error` (measurement noise): 0.01–0.05 m.
+- Faster tracking (pumping/off events, steep changes):
+        - Increase `process_std_dev` to 0.10–0.30 m.
+        - If small jitter leaks through, raise source `error` slightly (e.g., 0.03–0.05 m) or increase the EMA window.
+- Very stable aquifer/noisy sensor already EMA-smoothed:
+        - Decrease `process_std_dev` toward 0.01–0.03 m; keep `error` near measured noise (often ~0.01–0.03 m).
+- Choosing values empirically:
+        - Observe a stable period: set source `error` ≈ std‑dev of `Depth Below Head (Raw)` during that period.
+        - Observe a rapid change (pump run): if Kalman lags noticeably behind `Raw`, increase `process_std_dev` a step.
+- Update interval note: parameters are “per update”. If you change `sensor_update_sec`, re‑tune; longer intervals generally need a larger `process_std_dev` to keep responsiveness.
+
 Deep sleep
 - Typical cycle: wake → energize sensor → measure → publish → power off → sleep.
 - Toggle “Deep Sleep Disable” in HA to keep the device awake for OTA/debugging.
