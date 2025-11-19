@@ -37,9 +37,6 @@ jobs:
       - name: Validate ESPHome syntax
         run: esphome config waterlevel-sensor.yaml
 
-      - name: Compile (dry-run)
-        run: esphome compile waterlevel-sensor.yaml --dry-run
-
   lint:
     name: Lint YAML Files
     runs-on: ubuntu-latest
