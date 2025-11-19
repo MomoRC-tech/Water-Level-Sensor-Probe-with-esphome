@@ -1,6 +1,9 @@
 # Well Water Level Monitoring (TL‑136 + ESP8266/ESP32 + ESPHome)
 
-Monitor a well (e.g. heat‑pump supply) with a 4–20 mA TL‑136 submersible pressure sensor and an ESP8266 D1 mini running ESPHome. Data flows into Home Assistant for visualization, alerts, and level-based automation (e.g. heat pump interlocks). Designed for reliability, easy calibration, and low long-term power drain.
+Monitor a well (e.g. heat‑pump supply) with a 4–20 mA TL‑136 submersible pressure sensor and an
+ESP8266 D1 mini running ESPHome. Data flows into Home Assistant for visualization, alerts, and
+level-based automation (e.g. heat pump interlocks). Designed for reliability, easy calibration, and
+low long-term power drain.
 
 ## Table of Contents
 - [Overview](#overview)
@@ -99,6 +102,7 @@ Build & flash
 3) For CI releases, tags trigger packaging in GitHub Actions (optional).
 
 Minimal secrets.yaml
+
 ```yaml
 wifi_ssid: "YourNetworkName"
 wifi_password: "YourPassword"
@@ -108,18 +112,24 @@ ap_password: "APFallbackPassword"
 
 ---
 ## Configuration
-All parameters appear as Home Assistant `number` entities (`entity_category: config`). Values persist across deep sleep.
+All parameters appear as Home Assistant `number` entities (`entity_category: config`). Values
+persist across deep sleep.
 
-- Geometry numbers: `cfg_surface_to_well_head` (surface ↓ head, positive), `cfg_head_to_sensor`, `cfg_head_to_pump1`, `cfg_head_to_pump2`, `cfg_head_to_bottom` (informational)
+- Geometry numbers: `cfg_surface_to_well_head` (surface ↓ head, positive), `cfg_head_to_sensor`,
+  `cfg_head_to_pump1`, `cfg_head_to_pump2`, `cfg_head_to_bottom` (informational)
 - Filtering window (s): `cfg_filter_window_s`
 - Calibration points: `cfg_cal1_*`, `cfg_cal2_*` (currents + depths)
 - Shunt resistance (Ω): `cfg_shunt_resistance_ohm`
-- Sensor span (m): `cfg_sensor_span_m` (factory 5.0 m for TL‑136; change when using a different range sensor)
+- Sensor span (m): `cfg_sensor_span_m` (factory 5.0 m for TL‑136; change when using a different
+        range sensor)
 
 Depth semantics
-- "Depth Below Head" (`water_depth_from_head`) is distance from the well head downward to the current water surface.
-- "Depth Below Surface" (`water_depth_from_surface`) = Depth Below Head + Surface→Head (the fixed offset `cfg_surface_to_well_head`).
-- Positive values mean the water surface lies below the reference (head or ground surface). Invalid / unavailable readings publish as no value (NaN).
+- "Depth Below Head" (`water_depth_from_head`) is distance from the well head downward to the
+        current water surface.
+- "Depth Below Surface" (`water_depth_from_surface`) = Depth Below Head + Surface→Head (the fixed
+        offset `cfg_surface_to_well_head`).
+- Positive values mean the water surface lies below the reference (head or ground surface).
+        Invalid / unavailable readings publish as no value (NaN).
 
 ## Calibration (Quick Guide)
 
@@ -171,8 +181,10 @@ Enter into HA
 - `cfg_cal2_current_mA = 20.00`, `cfg_cal2_depth_m = 1.00`
 
 Cross‑checks
-- Depth Below Surface = Depth Below Head + `cfg_surface_to_well_head` (so add 1.20 m to the above depths if you want surface‑referenced values).
-- If you pick a different second point (not full span), ensure it still lies between 1.00 m and 6.00 m and its current is stable.
+- Depth Below Surface = Depth Below Head + `cfg_surface_to_well_head` (add 1.20 m to the above
+        depths if you want surface‑referenced values).
+- If you pick a different second point (not full span), ensure it still lies between 1.00 m and
+        6.00 m and its current is stable.
 
 ### Recommended Order
 1. Set geometry numbers.
@@ -188,10 +200,12 @@ Defect / disconnect detection
 - Readings with loop current < 4 mA (below nominal 4–20 mA range) are treated as invalid and user-facing level sensors publish no value (suppressed as NaN).
 
 Filtering & warmup
+
 ```text
 avg = avg + alpha * (raw - avg)
 alpha = dt / window_s     (dt = update period)
 ```
+
 Warmup suppresses the first few publishes to avoid skewed initial values.
 
 ### Kalman filtering notes

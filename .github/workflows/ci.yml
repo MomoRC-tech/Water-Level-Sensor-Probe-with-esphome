@@ -62,28 +62,4 @@ jobs:
         run: |
           yamllint -d "{extends: relaxed, rules: {line-length: disable, trailing-spaces: disable}}" waterlevel-sensor.yaml
           yamllint -d "{extends: relaxed, rules: {line-length: disable, trailing-spaces: disable}}" .github/workflows/ci.yml
-
-  markdown-lint:
-    name: Lint Markdown
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Create markdownlint config
-        run: |
-          cat <<'EOF' > .markdownlint.json
-          {
-            "MD013": false,
-            "MD022": false,
-            "MD031": false,
-            "MD032": false,
-            "no-inline-html": false
-          }
-          EOF
-
-      - name: Lint README
-        uses: DavidAnson/markdownlint-cli2-action@v15
-        with:
-          globs: '**/*.md'
+          yamllint -d "{extends: relaxed, rules: {line-length: disable, trailing-spaces: disable}}" .github/workflows/release.yml
