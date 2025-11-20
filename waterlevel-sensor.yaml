@@ -17,6 +17,14 @@ esphome:
             - deep_sleep.prevent: main_deep_sleep
           else:
             - deep_sleep.allow: main_deep_sleep
+      # Initialize high-rate sampling cycle
+      - lambda: |-
+          id(publish_ready) = false;
+          id(high_rate_done) = false;
+          id(sampling_start_ms) = millis();
+      # Stabilization delay before starting high-rate sampling
+      - delay: 2s
+      - script.execute: start_high_rate_sampling
 
   on_shutdown:
     then:
@@ -49,6 +57,85 @@ deep_sleep:
   sleep_duration: 10min  # Then enter deep sleep
 
 # ============================================================
+# GLOBALS & SCRIPTS FOR HIGH-RATE SAMPLING / SINGLE PUBLISH
+# ============================================================
+
+globals:
+  - id: publish_ready
+    type: bool
+    restore_value: false
+    initial_value: 'false'
+  - id: high_rate_done
+    type: bool
+    restore_value: false
+    initial_value: 'false'
+  - id: sampling_start_ms
+    type: uint32_t
+    restore_value: false
+    initial_value: '0'
+
+script:
+  - id: start_high_rate_sampling
+    then:
+      - lambda: |-
+          id(sampling_start_ms) = millis();
+          id(high_rate_done) = false;
+          id(publish_ready) = false;
+  - id: complete_cycle_and_sleep
+    then:
+      - lambda: |-
+          // Mark ready for single publish
+          id(publish_ready) = true;
+      # Enter deep sleep if not blocked by switches
+      - if:
+          condition:
+            and:
+              - switch.is_off: deep_sleep_disable
+              - switch.is_off: burst_mode
+          then:
+            - deep_sleep.enter: main_deep_sleep
+          else:
+            - logger.log: "Deep sleep prevented (Stay Awake or Burst Mode active)"
+  - id: auto_off_stay_awake
+    then:
+      - delay: 30min
+      - if:
+          condition:
+            switch.is_on: deep_sleep_disable
+          then:
+            - logger.log: "Auto-off Stay Awake after 30 min"
+            - switch.turn_off: deep_sleep_disable
+  - id: auto_off_burst_mode
+    then:
+      - delay: 30min
+      - if:
+          condition:
+            switch.is_on: burst_mode
+          then:
+            - logger.log: "Auto-off Burst Mode after 30 min"
+            - switch.turn_off: burst_mode
+
+# Interval for high-rate sampling (every 500 ms ~2 Hz during first 5 s)
+interval:
+  - interval: 500ms
+    then:
+      - lambda: |-
+          if (id(high_rate_done)) return; // Already finished
+          uint32_t elapsed = millis() - id(sampling_start_ms);
+          if (elapsed <= 5000) {
+            // Force updates of raw chain to accelerate existing filters.
+            id(shunt_adc_raw).update();
+            id(shunt_voltage).update();
+            id(loop_current_raw).update();
+            id(loop_current_filtered).update();
+            id(well_depth_raw).update();
+          } else {
+            id(high_rate_done) = true;
+            // Run completion script (single publish + optional sleep)
+            id(complete_cycle_and_sleep).execute();
+          }
+
+# ============================================================
 # RELAY: High-side switch of 5 V feed to 24 V boost (controls sensor power)
 # ============================================================
 
@@ -75,6 +162,20 @@ switch:
     restore_mode: RESTORE_DEFAULT_ON
     turn_on_action:
       - deep_sleep.prevent: main_deep_sleep
+      - script.execute: auto_off_stay_awake
+    turn_off_action:
+      - deep_sleep.allow: main_deep_sleep
+
+  - platform: template
+    name: "Burst Mode"
+    id: burst_mode
+    icon: "mdi:chart-bubble"
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    turn_on_action:
+      - deep_sleep.prevent: main_deep_sleep
+      - script.execute: auto_off_burst_mode
     turn_off_action:
       - deep_sleep.allow: main_deep_sleep
 
@@ -242,6 +343,19 @@ number:
     min_value: 1.0
     max_value: 50.0
     step: 0.1
+
+  # Sleep duration (minutes) for deep sleep phase
+  - platform: template
+    name: "CFG Sleep Duration"
+    id: cfg_sleep_duration_min
+    unit_of_measurement: "min"
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_value: 10.0
+    min_value: 1.0
+    max_value: 180.0
+    step: 1.0
 
 # ============================================================
 # 2) SENSING & CALCULATIONS
@@ -443,6 +557,7 @@ sensor:
           if (isnan(x)) return {};
           return x;
     lambda: |-
+      if (!id(publish_ready)) return NAN;  // Gate until single publish moment
       return id(well_depth_raw).state;
 
   # 2.6c Kalman-filtered Depth Below Head – tunes: process_std_dev (q^0.5), error (r^0.5)
@@ -481,6 +596,7 @@ sensor:
           if (isnan(x)) return {};
           return x;
     lambda: |-
+      if (!id(publish_ready)) return NAN;
       float depth_head = id(water_depth_from_head).state;          // m below well head
       float surface_to_head = id(cfg_surface_to_well_head).state;  // m (surface down to well head)
 
@@ -508,6 +624,7 @@ sensor:
           if (isnan(x)) return {};
           return x;
     lambda: |-
+      if (!id(publish_ready)) return NAN;
       float depth_head_k = id(water_depth_from_head_kalman).state;   // m below well head (Kalman)
       float surface_to_head = id(cfg_surface_to_well_head).state;     // m (surface down to well head)
       if (isnan(depth_head_k) || isnan(surface_to_head)) {
@@ -530,6 +647,7 @@ sensor:
           if (isnan(x)) return {};
           return x;
     lambda: |-
+      if (!id(publish_ready)) return NAN;
       float depth_head = id(water_depth_from_head).state;
       float d_pump1 = id(cfg_head_to_pump1).state;
       if (isnan(depth_head) || isnan(d_pump1)) return NAN;
@@ -552,6 +670,7 @@ sensor:
           if (isnan(x)) return {};
           return x;
     lambda: |-
+      if (!id(publish_ready)) return NAN;
       float depth_head = id(water_depth_from_head).state;
       float d_pump2 = id(cfg_head_to_pump2).state;
       if (isnan(depth_head) || isnan(d_pump2)) return NAN;

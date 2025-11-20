@@ -21,6 +21,9 @@ low long-term power drain.
 - OTA-friendly: deep sleep can be disabled from Home Assistant.
 - Flexible setup: all geometry, calibration, and filtering are configurable from HA (no reflashing).
 - Safety: error sensor flags implausible shunt voltage range.
+ - Controlled wake cycle: 2 s stabilization + 5 s high‑rate sampling (~2 Hz) then a single gated publish.
+- Publish gating: user‑facing depth and derivative sensors output only after the burst completes (reduces early wake noise).
+- Maintenance & diagnostics modes: "Stay Awake" (auto‑off after 30 min) and "Burst Mode" (continuous wake, 30 min auto‑off) switches prevent deep sleep for OTA or rapid observation.
 
 <p align="center">
   <img src="installation.PNG" alt="Well geometry and reference depths (cfg_* and water_* entities)" width="600">
@@ -231,6 +234,11 @@ Tuning (practical starting points)
 Deep sleep
 - Typical cycle: wake → energize sensor → measure → publish → power off → sleep.
 - Toggle “Deep Sleep Disable” in HA to keep the device awake for OTA/debugging.
+- High‑rate sampling phase: On boot a 2 s stabilization delay runs before a 5 s burst at 500 ms intervals (~2 Hz, below sensor response limit). Internally the raw chain (`shunt_adc_raw`, `shunt_voltage`, `loop_current_raw`, `loop_current_filtered`, `well_depth_raw`) is force‑updated each interval. After the burst the script sets `publish_ready = true` and depth sensors begin emitting values.
+- Single publish gating: Until `publish_ready` is set, user‑facing depth sensors return `NaN` (hidden), avoiding transient initialization data.
+- Burst Mode: When the `burst_mode` switch is ON deep sleep is prevented after the cycle; repeated cycles continue until auto‑off (30 min) or manual disable.
+- Auto‑off safeguards: Both `Stay Awake` (`deep_sleep_disable`) and `Burst Mode` switches start a 30‑minute timer script on activation; if still ON they are turned OFF automatically and normal deep sleep resumes.
+- Sleep duration configuration: A `cfg_sleep_duration_min` number entity is present for future dynamic sleep tuning (currently fixed at 10 min in `deep_sleep:` block; can be wired to scripted entry later).
 
 Installation checklist
 1. Build hardware; share ground between 24 V and 5 V rails.
@@ -262,6 +270,7 @@ Error detection
 Switches
 - `sensor_power` (Sensor Power)
 - `deep_sleep_disable` (Stay Awake)
+- `burst_mode` (Burst Mode – forces continuous cycles, auto‑off 30 min)
 
 Configuration numbers (prefix omitted in HA UI display name)
 - `cfg_surface_to_well_head`, `cfg_head_to_sensor`, `cfg_head_to_pump1`, `cfg_head_to_pump2`, `cfg_head_to_bottom`
