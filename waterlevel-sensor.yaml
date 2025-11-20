@@ -356,6 +356,42 @@ number:
     min_value: 1.0
     max_value: 180.0
     step: 1.0
+  # Dry detection depth tolerance (m)
+  - platform: template
+    name: "CFG Dry Depth Tol"
+    id: cfg_dry_depth_tol_m
+    unit_of_measurement: "m"
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_value: 0.05
+    min_value: 0.01
+    max_value: 0.20
+    step: 0.01
+  # Dry detection column tolerance (m)
+  - platform: template
+    name: "CFG Dry Column Tol"
+    id: cfg_dry_column_tol_m
+    unit_of_measurement: "m"
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_value: 0.05
+    min_value: 0.01
+    max_value: 0.20
+    step: 0.01
+  # Dry detection current band half-width (mA) around 4.0 mA baseline
+  - platform: template
+    name: "CFG Dry Current Band"
+    id: cfg_dry_current_band_mA
+    unit_of_measurement: "mA"
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_value: 0.25
+    min_value: 0.05
+    max_value: 1.00
+    step: 0.01
 
 # ============================================================
 # 2) SENSING & CALCULATIONS
@@ -701,3 +737,33 @@ binary_sensor:
     filters:
       - delayed_on: 10s
       - delayed_off: 10s
+  - platform: template
+    id: water_dry
+    name: "Well Dry"
+    device_class: problem
+    entity_category: diagnostic
+    lambda: |-
+      // Require publish gating complete and sensor powered
+      if (!id(publish_ready) || !id(sensor_power).state) return false;
+
+      float depth = id(water_depth_from_head).state;
+      float sensor_d = id(cfg_head_to_sensor).state;
+      float column = id(sensor_column_filtered_m).state;
+      float i = id(loop_current_filtered).state;
+      float depth_tol = id(cfg_dry_depth_tol_m).state;
+      float column_tol = id(cfg_dry_column_tol_m).state;
+      float current_band = id(cfg_dry_current_band_mA).state;
+
+      if (isnan(depth) || isnan(sensor_d) || isnan(column) || isnan(i)) return false;
+      if (isnan(depth_tol) || depth_tol < 0.005f) depth_tol = 0.05f;
+      if (isnan(column_tol) || column_tol < 0.005f) column_tol = 0.05f;
+      if (isnan(current_band) || current_band < 0.01f) current_band = 0.25f;
+
+      bool near_depth = fabs(depth - sensor_d) < depth_tol;
+      bool near_column = column < column_tol; // Very little water column above sensor
+      bool near_current = (i >= (4.0f - current_band) && i <= (4.0f + current_band));
+
+      return near_depth && near_column && near_current;
+    filters:
+      - delayed_on: 30s
+      - delayed_off: 30s

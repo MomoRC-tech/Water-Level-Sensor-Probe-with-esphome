@@ -272,10 +272,21 @@ Switches
 - `deep_sleep_disable` (Stay Awake)
 - `burst_mode` (Burst Mode – forces continuous cycles, auto‑off 30 min)
 
+Dry / Environmental Detection
+- `water_dry` (Well Dry): Indicates the water surface has dropped to (or below) the sensor top. Requires:
+        - Depth ≈ `cfg_head_to_sensor` within tolerance `cfg_dry_depth_tol_m`
+        - Column above sensor < `cfg_dry_column_tol_m`
+        - Loop current within 4.0 mA ± `cfg_dry_current_band_mA`
+        - Stable for 30 s (delayed on/off to avoid noise)
+
 Configuration numbers (prefix omitted in HA UI display name)
 - `cfg_surface_to_well_head`, `cfg_head_to_sensor`, `cfg_head_to_pump1`, `cfg_head_to_pump2`, `cfg_head_to_bottom`
 - `cfg_filter_window_s`, `cfg_cal1_current_mA`, `cfg_cal1_depth_m`, `cfg_cal2_current_mA`, `cfg_cal2_depth_m`
 - `cfg_shunt_resistance_ohm`, `cfg_sensor_span_m`
+- Dry detection tolerances:
+        - `cfg_dry_depth_tol_m` (depth match tolerance to sensor top)
+        - `cfg_dry_column_tol_m` (remaining water column threshold)
+        - `cfg_dry_current_band_mA` (half-width band around baseline 4.0 mA indicating dry)
 
 ---
 ## Reference
