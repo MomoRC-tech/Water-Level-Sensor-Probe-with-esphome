@@ -396,6 +396,19 @@ number:
     step: 0.01
     mode: BOX
 
+  - platform: template
+    name: "CFG Surface to Well Head"
+    id: cfg_surface_to_well_head
+    unit_of_measurement: "m"
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_value: 0.95
+    min_value: 0.0
+    max_value: 5.0
+    step: 0.01
+    mode: BOX
+
   # Dry-current threshold band (mA) – below this, we consider "waterlevel below minimum"
   - platform: template
     name: "CFG Dry Current Band"
@@ -661,17 +674,13 @@ sensor:
     lambda: |-
       if (!id(publish_ready)) return NAN;
 
-      float depth_head = id(water_depth_from_head).state;
-      float d_sensor = id(cfg_head_to_sensor).state;
-      if (isnan(depth_head) || isnan(d_sensor)) {
+      float depth_head      = id(water_depth_from_head).state;
+      float surface_to_head = id(cfg_surface_to_well_head).state;
+      if (isnan(depth_head) || isnan(surface_to_head)) {
         return NAN;
       }
-      // Depth below surface = depth below head + (distance head-to-sensor - column height)
-      float col = id(sensor_column_filtered_m).state;
-      if (isnan(col)) return NAN;
+      return depth_head + surface_to_head;
 
-      float surface_depth = depth_head - (d_sensor - col);
-      return surface_depth;
 
   # 2.8 Water height above pump 1 (m), positive = pump submerged
   - platform: template
