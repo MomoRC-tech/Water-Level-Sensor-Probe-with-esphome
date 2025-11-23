@@ -479,8 +479,8 @@ sensor:
         return NAN;
       }
       float i_mA = (u / r) * 1000.0f;
-      # Treat currents clearly below nominal 4 mA as invalid (open loop / defect)
-      # Use a small margin to avoid noise misclassification.
+      // Treat currents clearly below nominal 4 mA as invalid (open loop / defect)
+      // Use a small margin to avoid noise misclassification.
       if (i_mA < 3.9f) return NAN;
       return i_mA;
 
