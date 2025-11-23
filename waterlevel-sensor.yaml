@@ -453,7 +453,6 @@ sensor:
     accuracy_decimals: 3
     update_interval: ${sensor_update_sec}s
     entity_category: diagnostic
-    internal: true
     lambda: |-
       float u_adc = id(shunt_adc_raw).state;
       if (isnan(u_adc)) return NAN;
