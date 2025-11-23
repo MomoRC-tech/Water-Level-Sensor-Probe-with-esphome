@@ -268,7 +268,6 @@ number:
     max_value: 50.0
     step: 0.01
 
-
   # Filter window for exponential moving average (seconds)
   - platform: template
     name: "CFG Filter Window Sensor Signal"
@@ -668,3 +667,20 @@ sensor:
         return NAN;
       }
       return d_pump2 - depth_head;
+
+# ============================================================
+# 3) DRY / MINIMUM WATERLEVEL DETECTION
+# ============================================================
+
+binary_sensor:
+  - platform: template
+    id: waterlevel_below_minimum
+    name: "Waterlevel Below Minimum"
+    device_class: problem
+    lambda: |-
+      // Only decide at the final publish moment of a measurement cycle
+      if (!id(publish_ready)) return {};
+      float i = id(loop_current_filtered).state;
+      float th = id(cfg_dry_current_band_mA).state;
+      if (isnan(i) || isnan(th)) return {};
+      return i < th;
