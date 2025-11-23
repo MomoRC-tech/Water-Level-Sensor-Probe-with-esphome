@@ -129,7 +129,7 @@ script:
 
   - id: auto_off_stay_awake
     then:
-      - delay: 30min
+      - delay: 10min
       - if:
           condition:
             switch.is_on: deep_sleep_disable
@@ -139,7 +139,7 @@ script:
 
   - id: auto_off_burst_mode
     then:
-      - delay: 30min
+      - delay: 10min
       - if:
           condition:
             switch.is_on: burst_mode
@@ -277,10 +277,10 @@ number:
     entity_category: config
     optimistic: true
     restore_value: true
-    initial_value: 5.0
+    initial_value: 10.0
     min_value: 2.0
     max_value: 60.0
-    step: 5.0
+    step: 1.0
 
   # Calibration point 1: loop current (mA)
   - platform: template
