@@ -17,13 +17,25 @@ esphome:
             - deep_sleep.prevent: main_deep_sleep
           else:
             - deep_sleep.allow: main_deep_sleep
+
       # Initialize high-rate sampling cycle
       - lambda: |-
           id(publish_ready) = false;
           id(high_rate_done) = false;
           id(sampling_start_ms) = millis();
-      # Stabilization delay before starting high-rate sampling
+
+      # Small initial delay
       - delay: 2s
+
+      # >>> NEW: wait until Wi-Fi is connected (so HA can actually see the publish) <<<
+      - wait_until:
+          condition:
+            wifi.connected
+
+      # Optional extra safety margin for API connection
+      - delay: 2s
+
+      # Now start the high-rate sampling window
       - script.execute: start_high_rate_sampling
 
   on_shutdown:
@@ -49,6 +61,7 @@ wifi:
     static_ip: 192.168.0.91   # same as you used in use_address
     gateway: 192.168.0.1       # your Fritz!Box IP
     subnet: 255.255.255.0
+  min_auth_mode: WPA2
 
 captive_portal:
 
@@ -111,7 +124,6 @@ script:
           condition:
             and:
               - switch.is_off: deep_sleep_disable
-              - switch.is_off: burst_mode
               - binary_sensor.is_off: ha_prevent_deep_sleep
           then:
             # Deep sleep path
@@ -126,7 +138,7 @@ script:
                   return (uint32_t) (mins * 60.0f * 1000.0f);
           else:
             # Stay-awake path
-            - logger.log: "Deep sleep prevented (Stay Awake, Burst Mode or HA helper active) - periodic updates every 10s"
+            - logger.log: "Deep sleep prevented (Stay Awake or HA helper active) - periodic updates every 10s"
             - switch.turn_on: sensor_power       # ensure sensor stays powered
 
   - id: auto_off_stay_awake
@@ -139,15 +151,6 @@ script:
             - logger.log: "Auto-off Stay Awake after 10 min"
             - switch.turn_off: deep_sleep_disable
 
-  - id: auto_off_burst_mode
-    then:
-      - delay: 10min
-      - if:
-          condition:
-            switch.is_on: burst_mode
-          then:
-            - logger.log: "Auto-off Burst Mode after 10 min"
-            - switch.turn_off: burst_mode
 
 # Interval timers
 interval:
@@ -176,7 +179,6 @@ interval:
           condition:
             or:
               - switch.is_on: deep_sleep_disable
-              - switch.is_on: burst_mode
               - binary_sensor.is_on: ha_prevent_deep_sleep
           then:
             # Update the measurement chain
@@ -230,19 +232,6 @@ switch:
     turn_on_action:
       - deep_sleep.prevent: main_deep_sleep
       - script.execute: auto_off_stay_awake
-    turn_off_action:
-      - deep_sleep.allow: main_deep_sleep
-
-  - platform: template
-    name: "Burst Mode"
-    id: burst_mode
-    icon: "mdi:chart-bubble"
-    entity_category: config
-    optimistic: true
-    restore_mode: RESTORE_DEFAULT_OFF
-    turn_on_action:
-      - deep_sleep.prevent: main_deep_sleep
-      - script.execute: auto_off_burst_mode
     turn_off_action:
       - deep_sleep.allow: main_deep_sleep
 
@@ -462,8 +451,6 @@ sensor:
     accuracy_decimals: 3
     update_interval: ${sensor_update_sec}s
     entity_category: diagnostic
-    # Make it visible in Home Assistant
-    # internal: true
     filters:
       - lambda: |-
           // Do not publish NaN values – keep last good value in HA
