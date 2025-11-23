@@ -160,7 +160,6 @@ interval:
           if (elapsed <= 5000) {
             // Force updates of raw chain to accelerate existing filters.
             id(shunt_adc_raw).update();
-            id(shunt_voltage).update();
             id(loop_current_raw).update();
             id(loop_current_filtered).update();
             id(well_depth_raw).update();
@@ -183,7 +182,6 @@ interval:
             # Update the measurement chain
             - lambda: |-
                 id(shunt_adc_raw).update();
-                id(shunt_voltage).update();
                 id(loop_current_raw).update();
                 id(loop_current_filtered).update();
                 id(well_depth_raw).update();
@@ -491,19 +489,23 @@ sensor:
     accuracy_decimals: 3
     update_interval: ${sensor_update_sec}s
     entity_category: diagnostic
-    internal: true
     lambda: |-
       if (!id(sensor_power).state) {
         return NAN;  // Sensor off
       }
-      float u = id(shunt_voltage).state;            // Volts
+
+      float u_adc = id(shunt_adc_raw).state;
+      if (isnan(u_adc)) return NAN;
+
+      // Convert internal ADC (0..1 V) to A0 voltage (0..~3.2 V)
+      float u = u_adc * 3.2f;                  // Volts
       float r = id(cfg_shunt_resistance_ohm).state; // Ohms
-      if (isnan(u) || isnan(r) || r < 1.0f) {
+      if (isnan(r) || r < 1.0f) {
         return NAN;
       }
+
       float i_mA = (u / r) * 1000.0f;
       // Treat currents clearly below nominal 4 mA as invalid (open loop / defect)
-      // Use a small margin to avoid noise misclassification.
       if (i_mA < 3.9f) return NAN;
       return i_mA;
 
