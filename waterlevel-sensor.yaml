@@ -27,10 +27,18 @@ esphome:
       # Small initial delay
       - delay: 2s
 
-      # >>> NEW: wait until Wi-Fi is connected (so HA can actually see the publish) <<<
+      # Wait until Wi-Fi is connected (so HA can actually see the publish)
       - wait_until:
           condition:
             wifi.connected
+
+      # Log boot state of the main flags
+      - logger.log:
+          level: DEBUG
+          format: "Boot: WiFi connected, StayAwake=%s, HA_prevent_deep_sleep=%s"
+          args:
+            - 'id(deep_sleep_disable).state ? "ON" : "OFF"'
+            - 'id(ha_prevent_deep_sleep).state ? "ON" : "OFF"'
 
       # Optional extra safety margin for API connection
       - delay: 2s
@@ -97,6 +105,10 @@ globals:
 script:
   - id: start_high_rate_sampling
     then:
+      - logger.log:
+          level: DEBUG
+          format: "start_high_rate_sampling: called, millis=%u"
+          args: ['millis()']
       - lambda: |-
           id(sampling_start_ms) = millis();
           id(high_rate_done) = false;
@@ -104,6 +116,13 @@ script:
 
   - id: complete_cycle_and_sleep
     then:
+      - logger.log:
+          level: DEBUG
+          format: "complete_cycle_and_sleep: entered, StayAwake=%s, HA_prevent_deep_sleep=%s"
+          args:
+            - 'id(deep_sleep_disable).state ? "ON" : "OFF"'
+            - 'id(ha_prevent_deep_sleep).state ? "ON" : "OFF"'
+
       # 1) Gate opens: sensors may now publish
       - lambda: |-
           id(publish_ready) = true;
@@ -126,6 +145,9 @@ script:
               - switch.is_off: deep_sleep_disable
               - binary_sensor.is_off: ha_prevent_deep_sleep
           then:
+            - logger.log:
+                level: DEBUG
+                format: "complete_cycle_and_sleep: Deep sleep path chosen (StayAwake=OFF, HA_prevent_deep_sleep=OFF)"
             # Deep sleep path
             - switch.turn_off: sensor_power      # cut sensor power only when sleeping
             - delay: 10s                         # stay awake for another 10s
@@ -138,6 +160,12 @@ script:
                   return (uint32_t) (mins * 60.0f * 1000.0f);
           else:
             # Stay-awake path
+            - logger.log:
+                level: DEBUG
+                format: "complete_cycle_and_sleep: Stay-awake path chosen (StayAwake=%s, HA_prevent_deep_sleep=%s)"
+                args:
+                  - 'id(deep_sleep_disable).state ? "ON" : "OFF"'
+                  - 'id(ha_prevent_deep_sleep).state ? "ON" : "OFF"'
             - logger.log: "Deep sleep prevented (Stay Awake or HA helper active) - periodic updates every 10s"
             - switch.turn_on: sensor_power       # ensure sensor stays powered
 
@@ -168,7 +196,6 @@ interval:
             id(well_depth_raw).update();
           } else {
             id(high_rate_done) = true;
-            // Run completion script (single publish + optional sleep / stay-awake)
             id(complete_cycle_and_sleep).execute();
           }
 
@@ -181,6 +208,13 @@ interval:
               - switch.is_on: deep_sleep_disable
               - binary_sensor.is_on: ha_prevent_deep_sleep
           then:
+            - logger.log:
+                level: DEBUG
+                format: "10s interval: Stay-awake update (StayAwake=%s, HA_prevent_deep_sleep=%s)"
+                args:
+                  - 'id(deep_sleep_disable).state ? "ON" : "OFF"'
+                  - 'id(ha_prevent_deep_sleep).state ? "ON" : "OFF"'
+
             # Update the measurement chain
             - lambda: |-
                 id(shunt_adc_raw).update();
@@ -193,16 +227,12 @@ interval:
             - component.update: water_over_pump1
             - component.update: water_over_pump2
           else:
-            # all flags are OFF → go to sleep now
-            - logger.log: "All keep-awake flags off -> entering deep sleep"
-            - switch.turn_off: sensor_power
-            - delay: 2s
-            - deep_sleep.enter:
-                id: main_deep_sleep
-                sleep_duration: !lambda |-
-                  float mins = id(cfg_sleep_duration_min).state;
-                  if (isnan(mins) || mins < 1.0f) mins = 10.0f;
-                  return (uint32_t) (mins * 60.0f * 1000.0f);
+            # All keep-awake flags OFF -> do nothing here.
+            # Deep sleep is handled in complete_cycle_and_sleep after a measurement cycle.
+            - logger.log:
+                level: DEBUG
+                format: "10s interval: All keep-awake flags OFF -> idle (no deep sleep from interval)"
+
 
 # ============================================================
 # RELAY: High-side switch of 5 V feed to 24 V boost (controls sensor power)
@@ -228,7 +258,7 @@ switch:
     icon: "mdi:power-sleep-off"
     entity_category: config
     optimistic: true
-    restore_mode: RESTORE_DEFAULT_ON
+    restore_mode: RESTORE_DEFAULT_OFF
     turn_on_action:
       - deep_sleep.prevent: main_deep_sleep
       - script.execute: auto_off_stay_awake
