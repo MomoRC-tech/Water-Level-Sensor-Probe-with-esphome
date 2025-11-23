@@ -31,6 +31,9 @@ esphome:
       # Before sleeping switch relay OFF (unpower sensor safely)
       - switch.turn_off: sensor_power
 
+web_server:
+  port: 80
+
 esp8266:
   board: d1_mini
 
@@ -42,6 +45,10 @@ wifi:
   ap:
     ssid: "${friendly_name} Fallback"
     password: !secret ap_password
+  manual_ip:
+    static_ip: 192.168.0.91   # same as you used in use_address
+    gateway: 192.168.0.1       # your Fritz!Box IP
+    subnet: 255.255.255.0
 
 captive_portal:
 
@@ -53,8 +60,8 @@ ota:
 
 deep_sleep:
   id: main_deep_sleep
-  run_duration: 30s      # Active (measurement & filtering phase)
-  sleep_duration: 10min  # Then enter deep sleep
+  # run_duration/sleep_duration are controlled dynamically via deep_sleep.enter
+  # based on cfg_sleep_duration_min.
 
 # ============================================================
 # GLOBALS & SCRIPTS FOR HIGH-RATE SAMPLING / SINGLE PUBLISH
@@ -73,6 +80,11 @@ globals:
     type: uint32_t
     restore_value: false
     initial_value: '0'
+  # Holds last 5-sample moving average of well_depth_raw
+  - id: well_depth_avg5
+    type: float
+    restore_value: false
+    initial_value: 'nan'
 
 script:
   - id: start_high_rate_sampling
@@ -81,21 +93,45 @@ script:
           id(sampling_start_ms) = millis();
           id(high_rate_done) = false;
           id(publish_ready) = false;
+
   - id: complete_cycle_and_sleep
     then:
+      # 1) Gate opens: sensors may now publish
       - lambda: |-
-          // Mark ready for single publish
           id(publish_ready) = true;
-      # Enter deep sleep if not blocked by switches
+
+      # 2) Force one final update of the key sensors (single publish moment)
+      - component.update: water_depth_from_head
+      - component.update: water_depth_from_surface
+      - component.update: water_over_pump1
+      - component.update: water_over_pump2
+
+      # Optional small delay to ensure the values get sent out via API
+      - delay: 500ms
+
+      # 3) Turn off sensor power relay immediately after sending
+      - switch.turn_off: sensor_power
+
+      # 4) Stay awake for another 10 seconds (Wi-Fi/API still available)
+      - delay: 10s
+
+      # 5) Enter deep sleep if not blocked by Stay Awake / Burst Mode
       - if:
           condition:
             and:
               - switch.is_off: deep_sleep_disable
               - switch.is_off: burst_mode
           then:
-            - deep_sleep.enter: main_deep_sleep
+            - deep_sleep.enter:
+                id: main_deep_sleep
+                sleep_duration: !lambda |-
+                  // cfg_sleep_duration_min is in minutes → convert to ms
+                  float mins = id(cfg_sleep_duration_min).state;
+                  if (isnan(mins) || mins < 1.0f) mins = 10.0f;  // safety default
+                  return (uint32_t) (mins * 60.0f * 1000.0f);
           else:
             - logger.log: "Deep sleep prevented (Stay Awake or Burst Mode active)"
+
   - id: auto_off_stay_awake
     then:
       - delay: 30min
@@ -105,6 +141,7 @@ script:
           then:
             - logger.log: "Auto-off Stay Awake after 30 min"
             - switch.turn_off: deep_sleep_disable
+
   - id: auto_off_burst_mode
     then:
       - delay: 30min
@@ -356,6 +393,7 @@ number:
     min_value: 1.0
     max_value: 180.0
     step: 1.0
+
   # Dry detection current threshold (mA). If loop current drops below this value, well considered dry.
   - platform: template
     name: "CFG Dry Current Threshold"
@@ -425,7 +463,7 @@ sensor:
       if (i_mA < 3.9f) return NAN;
       return i_mA;
 
-  # 2.4 Filtered loop current with warmup phase
+  # 2.4 Filtered loop current with warmup phase (EMA)
   - platform: template
     id: loop_current_filtered
     name: "Loop Current"
@@ -502,9 +540,9 @@ sensor:
       return level;
 
   # 2.6 Calibrated water depth from well head (m)
-  # 2.6a Depth Below Head (raw, unfiltered by Kalman) – keep calibration logic here
+  # 2.6a Depth Below Head (raw, unfiltered by moving average) – keep calibration logic here
   # Uses filtered loop current for stability; applies two-point calibration when valid,
-  # otherwise falls back to span curve. This serves as the input to the Kalman filter below.
+  # otherwise falls back to span curve. We also compute a 5-sample moving average here.
   - platform: template
     id: well_depth_raw
     name: "Depth Below Head (Raw)"
@@ -544,17 +582,43 @@ sensor:
         if (d2 < (min_depth - eps) || d2 > (max_depth + eps)) calib_valid = false;
       }
 
+      float depth;
       if (calib_valid) {
         float t = (i - i1) / (i2 - i1);
-        return d1 + t * (d2 - d1);
+        depth = d1 + t * (d2 - d1);
+      } else {
+        // Fallback: theoretical sensor curve (0..sensor span column above sensor)
+        float h_over_sensor = id(sensor_column_filtered_m).state;
+        if (isnan(h_over_sensor)) return NAN;
+        depth = d_sensor - h_over_sensor;
       }
 
-      // Fallback: theoretical sensor curve (0..sensor span column above sensor)
-      float h_over_sensor = id(sensor_column_filtered_m).state;
-      if (isnan(h_over_sensor)) return NAN;
-      return d_sensor - h_over_sensor;
+      // --- 5-sample simple moving average over measurement phase ---
+      static float buf[5];
+      static int count = 0;
+      static int idx = 0;
 
-  # 2.6b Published Depth Below Head (backward-compatible): simply expose raw depth
+      // Only include valid depths in the buffer
+      if (!isnan(depth)) {
+        buf[idx] = depth;
+        idx = (idx + 1) % 5;
+        if (count < 5) count++;
+      }
+
+      if (count > 0) {
+        float sum = 0.0f;
+        for (int k = 0; k < count; k++) {
+          sum += buf[k];
+        }
+        float avg = sum / float(count);
+        id(well_depth_avg5) = avg;
+      } else {
+        id(well_depth_avg5) = NAN;
+      }
+
+      return depth;
+
+  # 2.6b Published Depth Below Head: expose 5-sample moving average
   - platform: template
     id: water_depth_from_head
     name: "Depth Below Head"
@@ -569,31 +633,14 @@ sensor:
           if (isnan(x)) return {};
           return x;
     lambda: |-
-      if (!id(publish_ready)) return NAN;  // Gate until single publish moment
-      return id(well_depth_raw).state;
+      if (!id(publish_ready)) return NAN;  # Gate until single publish moment
+      float avg = id(well_depth_avg5);
+      if (isnan(avg)) {
+        return NAN;
+      }
+      return avg;
 
-  # 2.6c Kalman-filtered Depth Below Head – tunes: process_std_dev (q^0.5), error (r^0.5)
-  # Tuning quick guide:
-  #   - process_std_dev (m per update): 0.02–0.10 typical, up to 0.30 for fast changes.
-  #   - source error (m): 0.01–0.05 typical; start at 0.02.
-  #   - Values are per update; if you change sensor_update_sec, re-tune for similar behavior.
-  - platform: combination
-    type: kalman
-    id: water_depth_from_head_kalman
-    name: "Depth Below Head (Kalman)"
-    unit_of_measurement: "m"
-    device_class: distance
-    state_class: measurement
-    accuracy_decimals: 3
-    icon: "mdi:arrow-down"
-    # Process noise std dev (m per update). Start with ~0.05 m; increase for faster response.
-    process_std_dev: 0.05
-    sources:
-      # Measurement source noise std dev (m). Typical 0.01–0.05 m; start with 0.02 m (2 cm).
-      - source: well_depth_raw
-        error: 0.02
-
-  # 2.7 Water depth below surface (m)
+  # 2.7 Water depth below surface (m), based on averaged depth
   - platform: template
     id: water_depth_from_surface
     name: "Depth Below Surface"
@@ -609,7 +656,7 @@ sensor:
           return x;
     lambda: |-
       if (!id(publish_ready)) return NAN;
-      float depth_head = id(water_depth_from_head).state;          // m below well head
+      float depth_head = id(water_depth_from_head).state;          // m below well head (averaged)
       float surface_to_head = id(cfg_surface_to_well_head).state;  // m (surface down to well head)
 
       if (isnan(depth_head) || isnan(surface_to_head)) {
@@ -619,30 +666,6 @@ sensor:
       // Depth below surface = depth below head + head depth below surface
       float depth_from_surface = depth_head + surface_to_head;
       return depth_from_surface;
-
-  # 2.7b Water depth below surface (Kalman)
-  # Derived via template from head Kalman + surface offset (translation-invariant); no extra filter.
-  - platform: template
-    id: water_depth_from_surface_kalman
-    name: "Depth Below Surface (Kalman)"
-    icon: "mdi:arrow-down"
-    unit_of_measurement: "m"
-    device_class: distance
-    state_class: measurement
-    accuracy_decimals: 3
-    update_interval: ${sensor_update_sec}s
-    filters:
-      - lambda: |-
-          if (isnan(x)) return {};
-          return x;
-    lambda: |-
-      if (!id(publish_ready)) return NAN;
-      float depth_head_k = id(water_depth_from_head_kalman).state;   // m below well head (Kalman)
-      float surface_to_head = id(cfg_surface_to_well_head).state;     // m (surface down to well head)
-      if (isnan(depth_head_k) || isnan(surface_to_head)) {
-        return NAN;
-      }
-      return depth_head_k + surface_to_head;
 
   # 2.8 Water height above pump 1 (m), positive = pump submerged
   - platform: template
@@ -662,12 +685,12 @@ sensor:
       if (!id(publish_ready)) return NAN;
       float depth_head = id(water_depth_from_head).state;
       float d_pump1 = id(cfg_head_to_pump1).state;
-      if (isnan(depth_head) || isnan(d_pump1)) return NAN;
+      if (isnan(depth_head) || isnan(d_pump1)) {
+        return NAN;
+      }
+      return d_pump1 - depth_head;
 
-      float height_over_pump = d_pump1 - depth_head;
-      return height_over_pump;
-
-  # 2.9 Water height above pump 2 (m)
+  # 2.9 Water height above pump 2 (m), positive = pump submerged
   - platform: template
     id: water_over_pump2
     name: "Over Pump 2"
@@ -685,47 +708,7 @@ sensor:
       if (!id(publish_ready)) return NAN;
       float depth_head = id(water_depth_from_head).state;
       float d_pump2 = id(cfg_head_to_pump2).state;
-      if (isnan(depth_head) || isnan(d_pump2)) return NAN;
-
-      float height_over_pump = d_pump2 - depth_head;
-      return height_over_pump;
-
-# ============================================================
-# 3) ERROR STATUS
-# ============================================================
-
-binary_sensor:
-  - platform: template
-    id: water_sensor_error
-    name: "Sensor Error"
-    device_class: problem
-    entity_category: diagnostic
-    lambda: |-
-      if (!id(sensor_power).state) {
-        // Sensor intentionally OFF → no error
-        return false;
+      if (isnan(depth_head) || isnan(d_pump2)) {
+        return NAN;
       }
-      float u = id(shunt_voltage).state;
-      if (isnan(u) || u < 0.05f || u > 3.2f) {
-        return true;
-      }
-      return false;
-    filters:
-      - delayed_on: 10s
-      - delayed_off: 10s
-  - platform: template
-    id: water_dry
-    name: "Well Dry"
-    device_class: problem
-    entity_category: diagnostic
-    lambda: |-
-      // Simple dry detection: loop current below configured threshold.
-      if (!id(publish_ready) || !id(sensor_power).state) return false;
-      float i = id(loop_current_filtered).state;
-      float threshold = id(cfg_dry_current_band_mA).state;
-      if (isnan(i)) return false;
-      if (isnan(threshold) || threshold <= 0.0f) threshold = 5.0f; // fallback default
-      return i < threshold;
-    filters:
-      - delayed_on: 30s
-      - delayed_off: 30s
+      return d_pump2 - depth_head;
