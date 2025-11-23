@@ -104,13 +104,8 @@ script:
       # Optional small delay to ensure the values get sent out via API
       - delay: 500ms
 
-      # 3) Turn off sensor power relay immediately after sending
-      - switch.turn_off: sensor_power
-
-      # 4) Stay awake for another 10 seconds (Wi-Fi/API still available)
-      - delay: 10s
-
-      # 5) Enter deep sleep if not blocked by Stay Awake / Burst Mode / HA helper
+      # 3) If deep sleep is allowed → power down sensor, short grace time, then sleep
+      #    Otherwise: stay awake and keep sensor powered for continuous updates
       - if:
           condition:
             and:
@@ -118,6 +113,9 @@ script:
               - switch.is_off: burst_mode
               - binary_sensor.is_off: ha_prevent_deep_sleep
           then:
+            # Deep sleep path
+            - switch.turn_off: sensor_power      # cut sensor power only when sleeping
+            - delay: 10s                         # stay awake for another 10s
             - deep_sleep.enter:
                 id: main_deep_sleep
                 sleep_duration: !lambda |-
@@ -126,7 +124,9 @@ script:
                   if (isnan(mins) || mins < 1.0f) mins = 10.0f;  // safety default
                   return (uint32_t) (mins * 60.0f * 1000.0f);
           else:
-            - logger.log: "Deep sleep prevented (Stay Awake, Burst Mode or HA helper active)"
+            # Stay-awake path
+            - logger.log: "Deep sleep prevented (Stay Awake, Burst Mode or HA helper active) - periodic updates every 10s"
+            - switch.turn_on: sensor_power       # ensure sensor stays powered
 
   - id: auto_off_stay_awake
     then:
@@ -135,7 +135,7 @@ script:
           condition:
             switch.is_on: deep_sleep_disable
           then:
-            - logger.log: "Auto-off Stay Awake after 30 min"
+            - logger.log: "Auto-off Stay Awake after 10 min"
             - switch.turn_off: deep_sleep_disable
 
   - id: auto_off_burst_mode
@@ -145,11 +145,12 @@ script:
           condition:
             switch.is_on: burst_mode
           then:
-            - logger.log: "Auto-off Burst Mode after 30 min"
+            - logger.log: "Auto-off Burst Mode after 10 min"
             - switch.turn_off: burst_mode
 
-# Interval for high-rate sampling (every 500 ms ~2 Hz during first 5 s)
+# Interval timers
 interval:
+  # High-rate sampling during the first ~5s
   - interval: 500ms
     then:
       - lambda: |-
@@ -164,9 +165,32 @@ interval:
             id(well_depth_raw).update();
           } else {
             id(high_rate_done) = true;
-            // Run completion script (single publish + optional sleep)
+            // Run completion script (single publish + optional sleep / stay-awake)
             id(complete_cycle_and_sleep).execute();
           }
+
+  # Periodic updates every 10s when deep sleep is prevented
+  - interval: 10s
+    then:
+      - if:
+          condition:
+            or:
+              - switch.is_on: deep_sleep_disable
+              - switch.is_on: burst_mode
+              - binary_sensor.is_on: ha_prevent_deep_sleep
+          then:
+            # Update the measurement chain
+            - lambda: |-
+                id(shunt_adc_raw).update();
+                id(shunt_voltage).update();
+                id(loop_current_raw).update();
+                id(loop_current_filtered).update();
+                id(well_depth_raw).update();
+            # And push the publishable entities (publish_ready is already true)
+            - component.update: water_depth_from_head
+            - component.update: water_depth_from_surface
+            - component.update: water_over_pump1
+            - component.update: water_over_pump2
 
 # ============================================================
 # RELAY: High-side switch of 5 V feed to 24 V boost (controls sensor power)
@@ -454,8 +478,8 @@ sensor:
         return NAN;
       }
       float i_mA = (u / r) * 1000.0f;
-      // Treat currents clearly below nominal 4 mA as invalid (open loop / defect)
-      // Use a small margin to avoid noise misclassification.
+      # Treat currents clearly below nominal 4 mA as invalid (open loop / defect)
+      # Use a small margin to avoid noise misclassification.
       if (i_mA < 3.9f) return NAN;
       return i_mA;
 
