@@ -84,7 +84,7 @@ globals:
   - id: well_depth_avg5
     type: float
     restore_value: false
-    initial_value: 'nan'
+    initial_value: 0.0
 
 script:
   - id: start_high_rate_sampling
@@ -633,7 +633,7 @@ sensor:
           if (isnan(x)) return {};
           return x;
     lambda: |-
-      if (!id(publish_ready)) return NAN;  # Gate until single publish moment
+      if (!id(publish_ready)) return NAN;  // Gate until single publish moment
       float avg = id(well_depth_avg5);
       if (isnan(avg)) {
         return NAN;
