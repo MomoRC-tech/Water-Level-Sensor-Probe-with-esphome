@@ -96,6 +96,7 @@ script:
           id(publish_ready) = true;
 
       # 2) Force one final update of the key sensors (single publish moment)
+      - component.update: loop_current_filtered 
       - component.update: water_depth_from_head
       - component.update: water_depth_from_surface
       - component.update: water_over_pump1
@@ -492,6 +493,11 @@ sensor:
     update_interval: ${sensor_update_sec}s
     entity_category: diagnostic
     icon: "mdi:current-ac"
+    filters:
+      - lambda: |-
+          // Do not publish NaN values – keep last good value in HA
+          if (isnan(x)) return {};
+          return x;
     lambda: |-
       if (!id(sensor_power).state) {
         return NAN;
@@ -523,12 +529,13 @@ sensor:
 
       warmup_count++;
 
-      // Suppress output during warmup phase
+      // During warmup we still compute, but filter above will drop NaN
       if (warmup_count <= WARMUP_SAMPLES) {
         return NAN;
       }
 
       return avg;
+
 
   # 2.5 Filtered sensor column (0..5 m above sensor) – diagnostic only
   - platform: template
