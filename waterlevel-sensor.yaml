@@ -453,9 +453,22 @@ sensor:
     accuracy_decimals: 3
     update_interval: ${sensor_update_sec}s
     entity_category: diagnostic
+    # Make it visible in Home Assistant
+    # internal: true
+    filters:
+      - lambda: |-
+          // Do not publish NaN values – keep last good value in HA
+          if (isnan(x)) return {};
+          return x;
     lambda: |-
+      // Only update when the sensor relay is ON
+      if (!id(sensor_power).state) {
+        return NAN;
+      }
+
       float u_adc = id(shunt_adc_raw).state;
       if (isnan(u_adc)) return NAN;
+
       // D1 mini: ADC 0..1 V corresponds to ~0..3.2 V at A0
       return u_adc * 3.2f;
 
