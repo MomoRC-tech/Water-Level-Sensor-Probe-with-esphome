@@ -1,7 +1,7 @@
 substitutions:
   devicename: welllevel
   friendly_name: "WellLevel"
-  sensor_update_sec: "5.0"   # Measurement interval in seconds
+  sensor_update_sec: "0.5"   # Measurement interval in seconds (2 Hz)
 
 esphome:
   name: ${devicename}
@@ -9,7 +9,7 @@ esphome:
   on_boot:
     priority: -100
     then:
-      # Allow or prevent deep sleep based on HA switch state
+      # Respect Stay Awake switch at boot
       - if:
           condition:
             switch.is_on: deep_sleep_disable
@@ -18,16 +18,14 @@ esphome:
           else:
             - deep_sleep.allow: main_deep_sleep
 
-      # Initialize state – high-rate sampling NOT started yet
+      # Initialize gate
       - lambda: |-
           id(publish_ready) = false;
-          id(high_rate_done) = false;
-          id(sampling_start_ms) = 0;
 
       # Small initial delay
       - delay: 2s
 
-      # Wait until API (Home Assistant) is connected so HA helper is usable
+      # Wait until API is available so we can use HA helper entities
       - wait_until:
           condition:
             api.connected
@@ -41,9 +39,8 @@ esphome:
 
       - delay: 1s
 
-      # Now start the high-rate sampling window
-      - script.execute: start_high_rate_sampling
-
+      # Start the first standardized measurement cycle
+      - script.execute: run_measurement_cycle
 
   on_shutdown:
     then:
@@ -84,7 +81,7 @@ deep_sleep:
   # based on cfg_sleep_duration_min.
 
 # ============================================================
-# GLOBALS & SCRIPTS FOR HIGH-RATE SAMPLING / SINGLE PUBLISH
+# GLOBALS & SCRIPTS FOR STANDARDIZED MEASUREMENT CYCLE
 # ============================================================
 
 globals:
@@ -92,55 +89,104 @@ globals:
     type: bool
     restore_value: false
     initial_value: 'false'
-  - id: high_rate_done
-    type: bool
-    restore_value: false
-    initial_value: 'false'
-  - id: sampling_start_ms
-    type: uint32_t
-    restore_value: false
-    initial_value: '0'
 
 script:
-  - id: start_high_rate_sampling
+  # One standardized measurement sequence:
+  # - make sure relay is ON
+  # - warm-up
+  # - 10 samples @ 2 Hz (every 500 ms), updating the full chain
+  # - publish once to HA
+  # - call check_deep_sleep() to decide next step
+  - id: run_measurement_cycle
     then:
       - logger.log:
           level: DEBUG
-          format: "start_high_rate_sampling: called, millis=%u"
-          args: ['millis()']
+          format: "run_measurement_cycle: start"
+
+      # 1) Ensure sensor is powered
+      - switch.turn_on: sensor_power
+
+      # 2) Warm-up time for sensor & filters
+      - delay: 3s
+
+      # 3) Clear publish gate while we collect samples
       - lambda: |-
-          id(sampling_start_ms) = millis();
-          id(high_rate_done) = false;
           id(publish_ready) = false;
 
-  - id: complete_cycle_and_sleep
-    then:
-      - logger.log:
-          level: DEBUG
-          format: "complete_cycle_and_sleep: entered, StayAwake=%s, HA_prevent_deep_sleep=%s"
-          args:
-            - 'id(deep_sleep_disable).state ? "ON" : "OFF"'
-            - 'id(ha_prevent_deep_sleep).state ? "ON" : "OFF"'
+      # 4) 10 samples @ 2 Hz (500 ms) – update the whole chain
+      - repeat:
+          count: 10
+          then:
+            - lambda: |-
+                id(shunt_adc_raw).update();
+                id(loop_current_raw).update();
+                id(loop_current_filtered).update();
+                id(well_depth_raw).update();
+            - delay: 500ms
 
-      # 1) Gate opens: sensors may now publish
+      # 5) Now allow publishing and push the "user" entities once
       - lambda: |-
           id(publish_ready) = true;
 
-      # 2) Force one final update of the key sensors (single publish moment)
-      - component.update: loop_current_filtered 
       - component.update: water_depth_from_head
       - component.update: water_depth_from_surface
       - component.update: water_over_pump1
       - component.update: water_over_pump2
 
-      # 3) Give them a short time to be sent via API
-      - delay: 500ms
+      # Give API a moment to send values
+      - delay: 1s
 
+      # 6) Decide if we go to sleep or schedule another measurement
+      - script.execute: check_deep_sleep
+
+
+  # Decide whether to deep sleep or stay awake and re-measure
+  - id: check_deep_sleep
+    then:
       - logger.log:
           level: DEBUG
-          format: "complete_cycle_and_sleep: measurement cycle finished; deep-sleep decision handled by 10s interval"
+          format: "check_deep_sleep: StayAwake=%s, HA_prevent_deep_sleep=%s"
+          args:
+            - 'id(deep_sleep_disable).state ? "ON" : "OFF"'
+            - 'id(ha_prevent_deep_sleep).state ? "ON" : "OFF"'
+
+      # If either flag is ON -> stay awake, schedule next cycle
+      - if:
+          condition:
+            or:
+              - switch.is_on: deep_sleep_disable
+              - binary_sensor.is_on: ha_prevent_deep_sleep
+          then:
+            - logger.log:
+                level: DEBUG
+                format: "check_deep_sleep: deep sleep prevented -> scheduling next measurement cycle"
+
+            # Wait some time before next measurement (tunable)
+            - delay: 10s
+
+            # Start the next cycle
+            - script.execute: run_measurement_cycle
+
+          else:
+            # Deep sleep allowed: turn relay OFF and then sleep
+            - logger.log:
+                level: DEBUG
+                format: "check_deep_sleep: all flags OFF -> going to deep sleep soon"
+
+            # 10 seconds "grace period" before sleep
+            - delay: 10s
+            - switch.turn_off: sensor_power
+            - delay: 2s
+
+            - deep_sleep.enter:
+                id: main_deep_sleep
+                sleep_duration: !lambda |-
+                  float mins = id(cfg_sleep_duration_min).state;
+                  if (isnan(mins) || mins < 1.0f) mins = 10.0f;
+                  return (uint32_t) (mins * 60.0f * 1000.0f);
 
 
+  # Auto-off for "Stay Awake" switch
   - id: auto_off_stay_awake
     then:
       - delay: 10min
@@ -150,89 +196,6 @@ script:
           then:
             - logger.log: "Auto-off Stay Awake after 10 min"
             - switch.turn_off: deep_sleep_disable
-
-
-# Interval timers
-interval:
-  # High-rate sampling during the first ~5s
-  - interval: 500ms
-    then:
-      - lambda: |-
-          if (id(sampling_start_ms) == 0) return;  // high-rate sampling not started yet
-          if (id(high_rate_done)) return;          // Already finished
-
-          uint32_t elapsed = millis() - id(sampling_start_ms);
-          if (elapsed <= 5000) {
-            // Force updates of raw chain to accelerate existing filters.
-            id(shunt_adc_raw).update();
-            id(loop_current_raw).update();
-            id(loop_current_filtered).update();
-            id(well_depth_raw).update();
-          } else {
-            id(high_rate_done) = true;
-            id(complete_cycle_and_sleep).execute();
-          }
-
-
-  # Periodic updates every 10s when deep sleep is prevented,
-  # and deep-sleep decision once the first cycle is done.
-  - interval: 10s
-    then:
-      # 1) If any keep-awake flag is ON -> stay awake and keep publishing
-      - if:
-          condition:
-            or:
-              - switch.is_on: deep_sleep_disable
-              - binary_sensor.is_on: ha_prevent_deep_sleep
-          then:
-            - logger.log:
-                level: DEBUG
-                format: "10s interval: Stay-awake update (StayAwake=%s, HA_prevent_deep_sleep=%s)"
-                args:
-                  - 'id(deep_sleep_disable).state ? "ON" : "OFF"'
-                  - 'id(ha_prevent_deep_sleep).state ? "ON" : "OFF"'
-
-            # Update the measurement chain
-            - lambda: |-
-                id(shunt_adc_raw).update();
-                id(loop_current_raw).update();
-                id(loop_current_filtered).update();
-                id(well_depth_raw).update();
-            # And push the publishable entities (publish_ready is already true after first cycle)
-            - component.update: water_depth_from_head
-            - component.update: water_depth_from_surface
-            - component.update: water_over_pump1
-            - component.update: water_over_pump2
-
-      # 2) Else: all keep-awake flags OFF → if first cycle is done, go to deep sleep
-      - if:
-          condition:
-            and:
-              - switch.is_off: deep_sleep_disable
-              - binary_sensor.is_off: ha_prevent_deep_sleep
-              - lambda: 'return id(high_rate_done) && id(publish_ready);'
-          then:
-            - logger.log:
-                level: DEBUG
-                format: "10s interval: All keep-awake flags OFF and cycle done -> entering deep sleep"
-            - switch.turn_off: sensor_power
-            - delay: 2s
-            - deep_sleep.enter:
-                id: main_deep_sleep
-                sleep_duration: !lambda |-
-                  float mins = id(cfg_sleep_duration_min).state;
-                  if (isnan(mins) || mins < 1.0f) mins = 10.0f;
-                  return (uint32_t) (mins * 60.0f * 1000.0f);
-          else:
-            - logger.log:
-                level: DEBUG
-                format: "10s interval: All keep-awake flags OFF but cycle not ready yet (high_rate_done=%s, publish_ready=%s)"
-                args:
-                  - 'id(high_rate_done) ? "true" : "false"'
-                  - 'id(publish_ready) ? "true" : "false"'
-
-
-
 
 # ============================================================
 # RELAY: High-side switch of 5 V feed to 24 V boost (controls sensor power)
@@ -266,22 +229,50 @@ switch:
       - deep_sleep.allow: main_deep_sleep
 
 # ============================================================
-# 1) CONFIGURATION VALUES (adjustable via Home Assistant)
+# 1) CONFIGURATION ENTITIES
 # ============================================================
 
 number:
-  # Distance from surface (ground level) down to well head (positive value means well head is below surface)
+  # Sleep duration between measurements (minutes)
   - platform: template
-    name: "CFG Surface to Well Head"
-    id: cfg_surface_to_well_head
+    name: "CFG Sleep Duration"
+    id: cfg_sleep_duration_min
+    unit_of_measurement: "min"
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_value: 10.0
+    min_value: 1.0
+    max_value: 120.0
+    step: 1.0
+    mode: BOX
+
+  # Shunt resistance (Ohm) used for loop current conversion
+  - platform: template
+    name: "CFG Shunt Resistance"
+    id: cfg_shunt_resistance_ohm
+    unit_of_measurement: "Ω"
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_value: 165.0
+    min_value: 10.0
+    max_value: 1000.0
+    step: 1.0
+    mode: BOX
+
+  # Sensor span (m) – default 5 m
+  - platform: template
+    name: "CFG Sensor Span"
+    id: cfg_sensor_span_m
     unit_of_measurement: "m"
     entity_category: config
     optimistic: true
     restore_value: true
-    initial_value: 0.95
-    min_value: 0.0
-    max_value: 5.0
-    step: 0.01
+    initial_value: 5.0
+    min_value: 1.0
+    max_value: 10.0
+    step: 0.1
     mode: BOX
 
   # Distance well head to sensor position
@@ -335,124 +326,76 @@ number:
     optimistic: true
     restore_value: true
     initial_value: 10.0
-    min_value: 2.0
-    max_value: 60.0
+    min_value: 1.0
+    max_value: 120.0
     step: 1.0
     mode: BOX
 
-  # Calibration point 1: loop current (mA)
+  # Calibration point 1: depth at well head and corresponding loop current
   - platform: template
-    name: "CFG Calibration Point 1 Current"
-    id: cfg_cal1_current_mA
-    unit_of_measurement: "mA"
-    entity_category: config
-    optimistic: true
-    restore_value: true
-    initial_value: 4.35
-    min_value: 0.0
-    max_value: 25.0
-    step: 0.01
-    mode: BOX
-
-  # Calibration point 1: depth from well head (m)
-  - platform: template
-    name: "CFG Calibration Point 1 Depth"
+    name: "CFG Cal1 Depth from Head"
     id: cfg_cal1_depth_m
     unit_of_measurement: "m"
     entity_category: config
     optimistic: true
     restore_value: true
-    initial_value: 4.80
+    initial_value: 2.0
     min_value: 0.0
-    max_value: 25.0
+    max_value: 50.0
     step: 0.01
     mode: BOX
 
-  # Calibration point 2: loop current (mA)
   - platform: template
-    name: "CFG Calibration Point 2 Current"
-    id: cfg_cal2_current_mA
+    name: "CFG Cal1 Loop Current"
+    id: cfg_cal1_current_mA
     unit_of_measurement: "mA"
     entity_category: config
     optimistic: true
     restore_value: true
-    initial_value: 20.0
+    initial_value: 8.0
     min_value: 0.0
-    max_value: 25.0
+    max_value: 50.0
     step: 0.01
     mode: BOX
 
-  # Calibration point 2: depth from well head (m)
+  # Calibration point 2: depth and loop current at second reference point
   - platform: template
-    name: "CFG Calibration Point 2 Depth"
+    name: "CFG Cal2 Depth from Head"
     id: cfg_cal2_depth_m
     unit_of_measurement: "m"
     entity_category: config
     optimistic: true
     restore_value: true
-    # For a 5 m span sensor with sensor mounted 5 m below well head:
-    #   4 mA (dry)  -> depth = 5.0 m (head_to_sensor)
-    #   20 mA (full)-> depth = 0.0 m (head_to_sensor - span)
-    # Adjust after setting head_to_sensor or cfg_sensor_span_m.
-    initial_value: 0.0
+    initial_value: 4.0
     min_value: 0.0
-    max_value: 25.0
+    max_value: 50.0
     step: 0.01
     mode: BOX
 
-  # Shunt resistance value (Ohms)
   - platform: template
-    name: "CFG Shunt Resistance"
-    id: cfg_shunt_resistance_ohm
-    unit_of_measurement: "Ω"
+    name: "CFG Cal2 Loop Current"
+    id: cfg_cal2_current_mA
+    unit_of_measurement: "mA"
     entity_category: config
     optimistic: true
     restore_value: true
-    initial_value: 150.0
-    min_value: 50.0
-    max_value: 200.0
-    step: 1.0
-    mode: BOX
-
-  # Sensor full measurable water column span (m) above sensor (factory = 5 m for TL-136)
-  - platform: template
-    name: "CFG Sensor Span"
-    id: cfg_sensor_span_m
-    unit_of_measurement: "m"
-    entity_category: config
-    optimistic: true
-    restore_value: true
-    initial_value: 5.0
-    min_value: 1.0
+    initial_value: 16.0
+    min_value: 0.0
     max_value: 50.0
-    step: 0.1
+    step: 0.01
     mode: BOX
 
-  # Sleep duration (minutes) for deep sleep phase
+  # Dry-current threshold band (mA) – below this, we consider "waterlevel below minimum"
   - platform: template
-    name: "CFG Sleep Duration"
-    id: cfg_sleep_duration_min
-    unit_of_measurement: "min"
-    entity_category: config
-    optimistic: true
-    restore_value: true
-    initial_value: 10.0
-    min_value: 1.0
-    max_value: 60.0
-    step: 1.0
-    mode: BOX
-
-  # Dry detection current threshold (mA). If loop current drops below this value, well considered dry.
-  - platform: template
-    name: "CFG Dry Current Threshold"
+    name: "CFG Dry Current Band"
     id: cfg_dry_current_band_mA
     unit_of_measurement: "mA"
     entity_category: config
     optimistic: true
     restore_value: true
-    initial_value: 5.0
+    initial_value: 3.8
     min_value: 0.0
-    max_value: 25.0
+    max_value: 10.0
     step: 0.01
     mode: BOX
 
@@ -468,7 +411,6 @@ sensor:
     name: "ADC Internal"
     unit_of_measurement: "V"
     accuracy_decimals: 3
-    update_interval: ${sensor_update_sec}s
     entity_category: diagnostic
     internal: true
     # External hardware: mandatory 1 kΩ series resistor + optional RC filter for protection
@@ -479,7 +421,6 @@ sensor:
     name: "Shunt Voltage Raw"
     unit_of_measurement: "V"
     accuracy_decimals: 3
-    update_interval: ${sensor_update_sec}s
     entity_category: diagnostic
     filters:
       - lambda: |-
@@ -504,7 +445,6 @@ sensor:
     name: "Loop Current Raw"
     unit_of_measurement: "mA"
     accuracy_decimals: 3
-    update_interval: ${sensor_update_sec}s
     entity_category: diagnostic
     filters:
       - lambda: |-
@@ -535,8 +475,9 @@ sensor:
     id: loop_current_filtered
     name: "Loop Current"
     unit_of_measurement: "mA"
+    device_class: current
+    state_class: measurement
     accuracy_decimals: 3
-    update_interval: ${sensor_update_sec}s
     entity_category: diagnostic
     icon: "mdi:current-ac"
     filters:
@@ -582,7 +523,6 @@ sensor:
 
       return avg;
 
-
   # 2.5 Filtered sensor column (0..5 m above sensor) – diagnostic only
   - platform: template
     id: sensor_column_filtered_m
@@ -590,7 +530,6 @@ sensor:
     unit_of_measurement: "m"
     accuracy_decimals: 3
     icon: "mdi:waves"
-    update_interval: ${sensor_update_sec}s
     entity_category: diagnostic
     internal: true
     lambda: |-
@@ -625,11 +564,10 @@ sensor:
     accuracy_decimals: 3
     entity_category: diagnostic
     internal: true
-    update_interval: ${sensor_update_sec}s
     lambda: |-
       if (!id(sensor_power).state) return NAN;
 
-      float i = id(loop_current_filtered).state;  // EMA-filtered current as measurement
+      float i = id(loop_current_filtered).state;
       if (isnan(i)) return NAN;
 
       float i1 = id(cfg_cal1_current_mA).state;
@@ -648,36 +586,46 @@ sensor:
       if (isnan(span) || span <= 0.0f) span = 5.0f;
       if (isnan(d_sensor)) calib_valid = false;
       if (calib_valid) {
-        float min_depth = d_sensor - span;
-        float max_depth = d_sensor;
-        const float eps = 0.001f;
-        if (d1 < (min_depth - eps) || d1 > (max_depth + eps)) calib_valid = false;
-        if (d2 < (min_depth - eps) || d2 > (max_depth + eps)) calib_valid = false;
+        float d_min = d_sensor - span;
+        float d_max = d_sensor;
+        if (d1 < d_min || d1 > d_max || d2 < d_min || d2 > d_max) {
+          calib_valid = false;
+        }
       }
 
-      float depth;
-      if (calib_valid) {
-        float t = (i - i1) / (i2 - i1);
-        depth = d1 + t * (d2 - d1);
-      } else {
-        // Fallback: theoretical sensor curve (0..sensor span column above sensor)
-        float h_over_sensor = id(sensor_column_filtered_m).state;
-        if (isnan(h_over_sensor)) return NAN;
-        depth = d_sensor - h_over_sensor;
+      if (!calib_valid) {
+        // Fallback to span curve (0 m => 4 mA, span m => 20 mA)
+        const float I_MIN = 4.0f;
+        const float I_MAX = 20.0f;
+        if (i < 3.9f) return NAN;
+        if (i < 0.5f || i > 25.0f) return NAN;
+        float level = (i - I_MIN) / (I_MAX - I_MIN) * span;
+        if (level < 0.0f) level = 0.0f;
+        if (level > span) level = span;
+        return d_sensor - level;
       }
 
-      return depth;
+      // Two-point calibration: d = m * i + b
+      float m = (d2 - d1) / (i2 - i1);
+      float b = d1 - m * i;
+      float d = m * i + b;
 
-  # 2.6b Published Depth Below Head: expose EMA-based raw depth once per cycle
+      // Clamp to [d_sensor - span, d_sensor]
+      float d_min = d_sensor - span;
+      float d_max = d_sensor;
+      if (d < d_min) d = d_min;
+      if (d > d_max) d = d_max;
+      return d;
+
+  # 2.6b Published depth below head (filtered)
   - platform: template
     id: water_depth_from_head
     name: "Depth Below Head"
-    icon: "mdi:arrow-down"
+    icon: "mdi:arrow-down-bold"
     unit_of_measurement: "m"
     device_class: distance
     state_class: measurement
     accuracy_decimals: 3
-    update_interval: ${sensor_update_sec}s
     filters:
       - lambda: |-
           if (isnan(x)) return {};
@@ -695,34 +643,34 @@ sensor:
     device_class: distance
     state_class: measurement
     accuracy_decimals: 3
-    update_interval: ${sensor_update_sec}s
     filters:
       - lambda: |-
           if (isnan(x)) return {};
           return x;
     lambda: |-
       if (!id(publish_ready)) return NAN;
-      float depth_head = id(water_depth_from_head).state;          // m below well head (EMA-based)
-      float surface_to_head = id(cfg_surface_to_well_head).state;  // m (surface down to well head)
 
-      if (isnan(depth_head) || isnan(surface_to_head)) {
+      float depth_head = id(water_depth_from_head).state;
+      float d_sensor = id(cfg_head_to_sensor).state;
+      if (isnan(depth_head) || isnan(d_sensor)) {
         return NAN;
       }
+      // Depth below surface = depth below head + (distance head-to-sensor - column height)
+      float col = id(sensor_column_filtered_m).state;
+      if (isnan(col)) return NAN;
 
-      // Depth below surface = depth below head + head depth below surface
-      float depth_from_surface = depth_head + surface_to_head;
-      return depth_from_surface;
+      float surface_depth = depth_head - (d_sensor - col);
+      return surface_depth;
 
   # 2.8 Water height above pump 1 (m), positive = pump submerged
   - platform: template
     id: water_over_pump1
-    name: "Over Pump 1"
-    icon: "mdi:pump"
+    name: "Water Over Pump 1"
+    icon: "mdi:waves-arrow-up"
     unit_of_measurement: "m"
     device_class: distance
     state_class: measurement
     accuracy_decimals: 3
-    update_interval: ${sensor_update_sec}s
     filters:
       - lambda: |-
           if (isnan(x)) return {};
@@ -739,13 +687,12 @@ sensor:
   # 2.9 Water height above pump 2 (m), positive = pump submerged
   - platform: template
     id: water_over_pump2
-    name: "Over Pump 2"
-    icon: "mdi:pump"
+    name: "Water Over Pump 2"
+    icon: "mdi:waves-arrow-up"
     unit_of_measurement: "m"
     device_class: distance
     state_class: measurement
     accuracy_decimals: 3
-    update_interval: ${sensor_update_sec}s
     filters:
       - lambda: |-
           if (isnan(x)) return {};
@@ -758,10 +705,6 @@ sensor:
         return NAN;
       }
       return d_pump2 - depth_head;
-
-# ============================================================
-# 3) DRY / MINIMUM WATERLEVEL DETECTION + HA PREVENT DEEP SLEEP
-# ============================================================
 
 binary_sensor:
   # Mirror HA input_boolean.prevent_deep_sleep
