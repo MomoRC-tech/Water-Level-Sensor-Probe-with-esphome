@@ -80,11 +80,6 @@ globals:
     type: uint32_t
     restore_value: false
     initial_value: '0'
-  # Holds last 5-sample moving average of well_depth_raw
-  - id: well_depth_avg5
-    type: float
-    restore_value: false
-    initial_value: '0.0'
 
 script:
   - id: start_high_rate_sampling
@@ -273,18 +268,6 @@ number:
     max_value: 50.0
     step: 0.01
 
-  # Total well depth from head (informational currently)
-  - platform: template
-    name: "CFG Well Depth from Head"
-    id: cfg_head_to_bottom
-    unit_of_measurement: "m"
-    entity_category: config
-    optimistic: true
-    restore_value: true
-    initial_value: 8.0
-    min_value: 0.0
-    max_value: 50.0
-    step: 0.01
 
   # Filter window for exponential moving average (seconds)
   - platform: template
@@ -294,9 +277,9 @@ number:
     entity_category: config
     optimistic: true
     restore_value: true
-    initial_value: 60.0
-    min_value: 5.0
-    max_value: 600.0
+    initial_value: 5.0
+    min_value: 2.0
+    max_value: 60.0
     step: 5.0
 
   # Calibration point 1: loop current (mA)
@@ -309,7 +292,7 @@ number:
     restore_value: true
     initial_value: 4.35
     min_value: 0.0
-    max_value: 30.0
+    max_value: 25.0
     step: 0.01
 
   # Calibration point 1: depth from well head (m)
@@ -322,7 +305,7 @@ number:
     restore_value: true
     initial_value: 4.80
     min_value: 0.0
-    max_value: 50.0
+    max_value: 25.0
     step: 0.01
 
   # Calibration point 2: loop current (mA)
@@ -335,7 +318,7 @@ number:
     restore_value: true
     initial_value: 20.0
     min_value: 0.0
-    max_value: 30.0
+    max_value: 25.0
     step: 0.01
 
   # Calibration point 2: depth from well head (m)
@@ -352,7 +335,7 @@ number:
     # Adjust after setting head_to_sensor or cfg_sensor_span_m.
     initial_value: 0.0
     min_value: 0.0
-    max_value: 50.0
+    max_value: 25.0
     step: 0.01
 
   # Shunt resistance value (Ohms)
@@ -365,7 +348,7 @@ number:
     restore_value: true
     initial_value: 150.0
     min_value: 50.0
-    max_value: 500.0
+    max_value: 200.0
     step: 1.0
 
   # Sensor full measurable water column span (m) above sensor (factory = 5 m for TL-136)
@@ -391,7 +374,7 @@ number:
     restore_value: true
     initial_value: 10.0
     min_value: 1.0
-    max_value: 180.0
+    max_value: 60.0
     step: 1.0
 
   # Dry detection current threshold (mA). If loop current drops below this value, well considered dry.
@@ -540,9 +523,9 @@ sensor:
       return level;
 
   # 2.6 Calibrated water depth from well head (m)
-  # 2.6a Depth Below Head (raw, unfiltered by moving average) – keep calibration logic here
+  # 2.6a Depth Below Head (raw, but based on EMA-filtered loop current)
   # Uses filtered loop current for stability; applies two-point calibration when valid,
-  # otherwise falls back to span curve. We also compute a 5-sample moving average here.
+  # otherwise falls back to span curve.
   - platform: template
     id: well_depth_raw
     name: "Depth Below Head (Raw)"
@@ -556,7 +539,7 @@ sensor:
     lambda: |-
       if (!id(sensor_power).state) return NAN;
 
-      float i = id(loop_current_filtered).state;  // use EMA-filtered current as measurement
+      float i = id(loop_current_filtered).state;  // EMA-filtered current as measurement
       if (isnan(i)) return NAN;
 
       float i1 = id(cfg_cal1_current_mA).state;
@@ -593,32 +576,9 @@ sensor:
         depth = d_sensor - h_over_sensor;
       }
 
-      // --- 5-sample simple moving average over measurement phase ---
-      static float buf[5];
-      static int count = 0;
-      static int idx = 0;
-
-      // Only include valid depths in the buffer
-      if (!isnan(depth)) {
-        buf[idx] = depth;
-        idx = (idx + 1) % 5;
-        if (count < 5) count++;
-      }
-
-      if (count > 0) {
-        float sum = 0.0f;
-        for (int k = 0; k < count; k++) {
-          sum += buf[k];
-        }
-        float avg = sum / float(count);
-        id(well_depth_avg5) = avg;
-      } else {
-        id(well_depth_avg5) = NAN;
-      }
-
       return depth;
 
-  # 2.6b Published Depth Below Head: expose 5-sample moving average
+  # 2.6b Published Depth Below Head: expose EMA-based raw depth once per cycle
   - platform: template
     id: water_depth_from_head
     name: "Depth Below Head"
@@ -634,13 +594,9 @@ sensor:
           return x;
     lambda: |-
       if (!id(publish_ready)) return NAN;  // Gate until single publish moment
-      float avg = id(well_depth_avg5);
-      if (isnan(avg)) {
-        return NAN;
-      }
-      return avg;
+      return id(well_depth_raw).state;
 
-  # 2.7 Water depth below surface (m), based on averaged depth
+  # 2.7 Water depth below surface (m), based on EMA-filtered head depth
   - platform: template
     id: water_depth_from_surface
     name: "Depth Below Surface"
@@ -656,7 +612,7 @@ sensor:
           return x;
     lambda: |-
       if (!id(publish_ready)) return NAN;
-      float depth_head = id(water_depth_from_head).state;          // m below well head (averaged)
+      float depth_head = id(water_depth_from_head).state;          // m below well head (EMA-based)
       float surface_to_head = id(cfg_surface_to_well_head).state;  // m (surface down to well head)
 
       if (isnan(depth_head) || isnan(surface_to_head)) {
