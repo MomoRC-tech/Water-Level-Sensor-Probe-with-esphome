@@ -84,7 +84,7 @@ globals:
   - id: well_depth_avg5
     type: float
     restore_value: false
-    initial_value: 0.0
+    initial_value: '0.0'
 
 script:
   - id: start_high_rate_sampling
