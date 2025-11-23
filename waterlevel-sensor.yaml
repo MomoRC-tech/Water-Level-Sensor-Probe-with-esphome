@@ -192,6 +192,17 @@ interval:
             - component.update: water_depth_from_surface
             - component.update: water_over_pump1
             - component.update: water_over_pump2
+          else:
+            # all flags are OFF → go to sleep now
+            - logger.log: "All keep-awake flags off -> entering deep sleep"
+            - switch.turn_off: sensor_power
+            - delay: 2s
+            - deep_sleep.enter:
+                id: main_deep_sleep
+                sleep_duration: !lambda |-
+                  float mins = id(cfg_sleep_duration_min).state;
+                  if (isnan(mins) || mins < 1.0f) mins = 10.0f;
+                  return (uint32_t) (mins * 60.0f * 1000.0f);
 
 # ============================================================
 # RELAY: High-side switch of 5 V feed to 24 V boost (controls sensor power)
