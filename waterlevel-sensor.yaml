@@ -228,6 +228,7 @@ number:
     min_value: 0.0
     max_value: 5.0
     step: 0.01
+    mode: BOX
 
   # Distance well head to sensor position
   - platform: template
@@ -241,6 +242,7 @@ number:
     min_value: 0.0
     max_value: 20.0
     step: 0.01
+    mode: BOX
 
   # Distance well head to pump 1
   - platform: template
@@ -254,6 +256,7 @@ number:
     min_value: 0.0
     max_value: 50.0
     step: 0.01
+    mode: BOX
 
   # Distance well head to pump 2
   - platform: template
@@ -267,6 +270,7 @@ number:
     min_value: 0.0
     max_value: 50.0
     step: 0.01
+    mode: BOX
 
   # Filter window for exponential moving average (seconds)
   - platform: template
@@ -280,6 +284,7 @@ number:
     min_value: 2.0
     max_value: 60.0
     step: 1.0
+    mode: BOX
 
   # Calibration point 1: loop current (mA)
   - platform: template
@@ -293,6 +298,7 @@ number:
     min_value: 0.0
     max_value: 25.0
     step: 0.01
+    mode: BOX
 
   # Calibration point 1: depth from well head (m)
   - platform: template
@@ -306,6 +312,7 @@ number:
     min_value: 0.0
     max_value: 25.0
     step: 0.01
+    mode: BOX
 
   # Calibration point 2: loop current (mA)
   - platform: template
@@ -319,6 +326,7 @@ number:
     min_value: 0.0
     max_value: 25.0
     step: 0.01
+    mode: BOX
 
   # Calibration point 2: depth from well head (m)
   - platform: template
@@ -336,6 +344,7 @@ number:
     min_value: 0.0
     max_value: 25.0
     step: 0.01
+    mode: BOX
 
   # Shunt resistance value (Ohms)
   - platform: template
@@ -349,6 +358,7 @@ number:
     min_value: 50.0
     max_value: 200.0
     step: 1.0
+    mode: BOX
 
   # Sensor full measurable water column span (m) above sensor (factory = 5 m for TL-136)
   - platform: template
@@ -362,6 +372,7 @@ number:
     min_value: 1.0
     max_value: 50.0
     step: 0.1
+    mode: BOX
 
   # Sleep duration (minutes) for deep sleep phase
   - platform: template
@@ -375,6 +386,7 @@ number:
     min_value: 1.0
     max_value: 60.0
     step: 1.0
+    mode: BOX
 
   # Dry detection current threshold (mA). If loop current drops below this value, well considered dry.
   - platform: template
@@ -388,6 +400,7 @@ number:
     min_value: 0.0
     max_value: 25.0
     step: 0.01
+    mode: BOX
 
 # ============================================================
 # 2) SENSING & CALCULATIONS
