@@ -110,12 +110,13 @@ script:
       # 4) Stay awake for another 10 seconds (Wi-Fi/API still available)
       - delay: 10s
 
-      # 5) Enter deep sleep if not blocked by Stay Awake / Burst Mode
+      # 5) Enter deep sleep if not blocked by Stay Awake / Burst Mode / HA helper
       - if:
           condition:
             and:
               - switch.is_off: deep_sleep_disable
               - switch.is_off: burst_mode
+              - binary_sensor.is_off: ha_prevent_deep_sleep
           then:
             - deep_sleep.enter:
                 id: main_deep_sleep
@@ -125,7 +126,7 @@ script:
                   if (isnan(mins) || mins < 1.0f) mins = 10.0f;  // safety default
                   return (uint32_t) (mins * 60.0f * 1000.0f);
           else:
-            - logger.log: "Deep sleep prevented (Stay Awake or Burst Mode active)"
+            - logger.log: "Deep sleep prevented (Stay Awake, Burst Mode or HA helper active)"
 
   - id: auto_off_stay_awake
     then:
@@ -682,10 +683,16 @@ sensor:
       return d_pump2 - depth_head;
 
 # ============================================================
-# 3) DRY / MINIMUM WATERLEVEL DETECTION
+# 3) DRY / MINIMUM WATERLEVEL DETECTION + HA PREVENT DEEP SLEEP
 # ============================================================
 
 binary_sensor:
+  # Mirror HA input_boolean.prevent_deep_sleep
+  - platform: homeassistant
+    id: ha_prevent_deep_sleep
+    entity_id: input_boolean.prevent_deep_sleep
+    internal: true
+
   - platform: template
     id: waterlevel_below_minimum
     name: "Waterlevel Below Minimum"
