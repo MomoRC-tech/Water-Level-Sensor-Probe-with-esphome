@@ -113,18 +113,28 @@ script:
       - lambda: |-
           id(publish_ready) = false;
 
-      # 4) 10 samples @ 2 Hz (500 ms) – update the whole chain
+      # 4) 10 samples @ 2 Hz (500 ms) – only what is needed for math
       - repeat:
           count: 10
           then:
             - lambda: |-
+                // Base ADC reading
                 id(shunt_adc_raw).update();
+
+                // Raw current from ADC (used by filtered current)
                 id(loop_current_raw).update();
+
+                // Exponential moving average filter on current
                 id(loop_current_filtered).update();
-                id(well_depth_raw).update();
             - delay: 500ms
 
-      # 5) Now allow publishing and push the "user" entities once
+      # 5) Single recomputation of second-level derivations for this cycle
+      #    (no need to do these 10×)
+      - component.update: sensor_column_filtered_m
+      - component.update: well_depth_raw
+      - component.update: shunt_voltage   # diagnostic: one value per cycle
+
+      # 6) Now allow publishing and push the "final" user entities once
       - lambda: |-
           id(publish_ready) = true;
 
@@ -136,8 +146,9 @@ script:
       # Give API a moment to send values
       - delay: 1s
 
-      # 6) Decide if we go to sleep or schedule another measurement
+      # 7) Decide if we go to sleep or schedule another measurement
       - script.execute: check_deep_sleep
+
 
 
   # Decide whether to deep sleep or stay awake and re-measure
