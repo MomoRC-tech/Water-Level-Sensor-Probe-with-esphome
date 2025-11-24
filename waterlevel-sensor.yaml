@@ -468,7 +468,6 @@ sensor:
     entity_category: diagnostic
     filters:
       - lambda: |-
-          if (!id(publish_ready)) return {};
           if (isnan(x)) return {};
           return x;
     lambda: |-
@@ -496,7 +495,6 @@ sensor:
     icon: "mdi:current-ac"
     filters:
       - lambda: |-
-          if (!id(publish_ready)) return {};
           if (isnan(x)) return {};
           return x;
     lambda: |-
