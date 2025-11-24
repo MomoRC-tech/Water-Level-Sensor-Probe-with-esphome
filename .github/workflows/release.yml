@@ -4,6 +4,11 @@ on:
   push:
     tags:
       - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag to release (e.g., v1.2.3). If provided, workflow will use this version instead of a pushed tag.'
+        required: false
 
 permissions:
   contents: write
@@ -21,7 +26,17 @@ jobs:
 
       - name: Get tag version
         id: get_version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            if [ -n "${{ github.event.inputs.version }}" ]; then
+              echo "VERSION=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+            else
+              echo "Error: no version input provided for workflow_dispatch" >&2
+              exit 1
+            fi
+          else
+            echo "VERSION=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Generate changelog
         id: changelog
