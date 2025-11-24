@@ -1,6 +1,6 @@
-# Well Water Level Monitoring (TL‑136 + ESP8266/ESP32 + ESPHome)
+# Well Water Level Monitoring (TL-136 + ESP8266/ESP32 + ESPHome)
 
-Monitor a well (e.g. heat‑pump supply) with a 4‑20 mA TL‑136 submersible pressure sensor and an
+Monitor a well (e.g. heat-pump supply) with a 4-20 mA TL-136 submersible pressure sensor and an
 ESP8266 D1 mini running ESPHome. Data flows into Home Assistant for visualization, alerts, and
 level-based automation (e.g. heat pump interlocks). Designed for reliability, easy calibration, and
 low long-term power drain.
@@ -17,45 +17,68 @@ low long-term power drain.
 ---
 
 ## Overview
+
 - Purpose: reliable well water level tracking with low power usage.
 - Power-saving: deep sleep by default, with **awake time minimized to a short burst per cycle**.
 - Deep-sleep control:
-  - Device only enters deep sleep from a script (`complete_cycle_and_sleep`) via `deep_sleep.enter`.
+  - The device only enters deep sleep from a script (`check_deep_sleep`) via `deep_sleep.enter`.
   - Sleep duration is derived from the `cfg_sleep_duration_min` number entity (minutes, set in HA).
-  - Deep sleep is **skipped** whenever `Stay Awake` or `Burst Mode` is active.
-- Measurement burst + single publish:
+  - Deep sleep is **skipped** whenever:
+    - `Stay Awake` is ON (`switch.deep_sleep_disable`), or
+    - the Home Assistant helper `input_boolean.prevent_deep_sleep` is ON (mirrored as internal
+      `binary_sensor.ha_prevent_deep_sleep`).
+- Standard measurement burst + single publish:
   - On boot:
-    - 2 s stabilization delay (sensor + ADC settle).
-    - Then a **5 s high‑rate sampling loop** at 500 ms interval (~2 Hz, ≈10 samples).
-  - During the burst:
-    - The raw chain (`shunt_adc_raw`, `shunt_voltage`, `loop_current_raw`, `loop_current_filtered`, `well_depth_raw`)
-      is explicitly updated every 500 ms.
-    - `well_depth_raw` maintains a **5‑sample moving average** (`well_depth_avg5`) over valid measurements.
-  - At the end of the 5 s window:
-    - A script sets `publish_ready = true`.
-    - A final update of the user-facing entities is forced:
-      - `water_depth_from_head`
-      - `water_depth_from_surface`
-      - `water_over_pump1`
-      - `water_over_pump2`
-    - A short 500 ms delay allows values to be transmitted to HA.
+    - Short 2 s delay.
+    - Wait until the ESPHome API is connected (so HA helpers are available).
+    - Another 1 s delay, then the standardized measurement cycle is started via `run_measurement_cycle`.
+  - During `run_measurement_cycle`:
+    - `sensor_power` relay is turned ON.
+    - 3 s warm-up time for sensor and EMA filter.
+    - `publish_ready` is set to `false` while samples are collected.
+    - A **5 s high-rate sampling loop** executes every 500 ms (~2 Hz, 10 samples):
+      - `shunt_adc_raw.update()`
+      - `loop_current_raw.update()`
+      - `loop_current_filtered.update()`
+    - After the loop:
+      - Internal template sensors `sensor_column_filtered_m` and `well_depth_raw` are updated once.
+      - `publish_ready` is set to `true`.
+      - Diagnostics (`shunt_voltage`, `loop_current_raw`, `loop_current_filtered`) are updated.
+      - Final user-facing depth entities are updated once:
+        - `water_depth_from_head`
+        - `water_depth_from_surface`
+        - `water_over_pump1`
+        - `water_over_pump2`
+      - A short 1 s delay allows values to be transmitted to HA.
+    - Finally, `check_deep_sleep` decides whether to schedule another cycle or enter deep sleep.
 - Publish gating:
-  - User‑facing depth sensors (`water_depth_from_head`, `water_depth_from_surface`, `water_over_pump1`,
-    `water_over_pump2`) **return `NaN` until `publish_ready` is true**, so HA only sees one clean
-    “final” value per wake cycle.
+  - User-facing depth sensors (`water_depth_from_head`, `water_depth_from_surface`,
+    `water_over_pump1`, `water_over_pump2`) **return `NaN` until `publish_ready` is true**, so HA only
+    sees one clean “final” value per wake cycle.
 - Filtering:
-  - The loop current is filtered with an **exponential moving average (EMA)** plus a warmup phase.
-  - The depth-from-head value used for publishing is a **5‑sample moving average** over the burst window.
+  - The loop current is filtered with an **exponential moving average (EMA)** plus a short warmup
+    phase that discards initial samples.
+  - The published depth is computed directly from the filtered loop current via a two-point
+    calibration; there is no additional 5-sample ring buffer any more.
 - Power optimization:
-  - Sensor power is controlled by a relay; it is **ON only during measurement (~7.5 s)** and then turned OFF.
-  - The device remains awake an additional ~10 s for HA/API availability with the sensor already OFF.
+  - Sensor power is controlled by a relay; it is ON for the warm-up + sampling + publishing period.
+  - If deep sleep is allowed, `check_deep_sleep`:
+    - waits 10 s (grace period with sensor still ON),
+    - turns `sensor_power` OFF,
+    - waits another 2 s,
+    - then calls `deep_sleep.enter` with the configured sleep duration.
 - Maintenance & diagnostics modes:
-  - **Stay Awake**: prevents deep sleep and auto‑turns off after 30 minutes.
-  - **Burst Mode**: keeps running repeated measurement cycles without entering deep sleep; auto‑off after 30 minutes.
+  - **Stay Awake**: prevents deep sleep and auto-turns off after 10 minutes.
+  - **Prevent deep sleep (HA helper)**: `input_boolean.prevent_deep_sleep` in HA mirrors into an
+    internal binary sensor and also prevents deep sleep as long as it’s ON.
+  - **Step-response debug**: a dedicated button runs a synthetic step-response test, computes timing
+    and noise metrics, and then resumes the normal measurement cycle.
 
-Typical awake timing per cycle (excluding Wi‑Fi connect time):
-- ~2 s (stabilization) + 5 s (burst) + 0.5 s (post‑publish delay) + 10 s (extra awake time)
-- ⇒ **~17.5 s** awake per cycle, **relay ON only ~7.5 s**, relay OFF for ≈10 s before sleeping.
+Typical awake timing per cycle (excluding Wi-Fi connect time):
+- ~2 s (boot delay) + API wait + 1 s + 3 s (warm-up) + 5 s (burst) + 1 s (post-publish delay)
+  + 10 s (grace period) + 2 s (after relay off)
+- ⇒ **roughly 20–25 s** awake per cycle, with the sensor relay ON for most of that period and OFF
+  for the entire deep-sleep interval.
 
 <p align="center">
   <img src="installation.PNG" alt="Well geometry and reference depths (cfg_* and water_* entities)" width="600">
@@ -63,54 +86,58 @@ Typical awake timing per cycle (excluding Wi‑Fi connect time):
 
 What you get
 - Sensor power only when needed (relay switches the 24 V supply)
-- Two‑point linear calibration (mA → depth), with robust fallback
-- Exponential moving average for loop current + 5‑sample mean for depth
-- User‑facing level entities plus diagnostics for troubleshooting
+- Two-point linear calibration (mA → depth), with robust fallback
+- Exponential moving average for loop current → calibrated, single-shot depth per cycle
+- User-facing level entities plus diagnostics for troubleshooting
+- Optional **step-response debug** mode for tuning the filter and verifying dynamic behavior
 
 Quick start (5 steps)
 1) Assemble hardware (choose wiring option) and share grounds as indicated.  
-2) Create `secrets.yaml` with Wi‑Fi (and optional `ota_password`).  
+2) Create `secrets.yaml` with Wi-Fi (and optional `ota_password`).  
 3) Run local validation scripts to catch issues early.  
 4) Add `waterlevel-sensor.yaml` in ESPHome; flash via USB once, then OTA.  
-5) In Home Assistant, set geometry, shunt value, filter window, then perform two‑point calibration.
+5) In Home Assistant, set geometry, shunt value, filter window, then perform two-point calibration.
 
 ---
 
 ## Hardware Setup
 
 Core parts
-- Sensor: TL‑136, 0‑5 m, 4‑20 mA, 24 V  
+
+> **Important (ESP8266 only):** For deep sleep wake-up to work as specified on ESP8266 boards, you **must** connect ("short") GPIO16 (D0) to the RESET (RST) pin. Without this connection, the ESP8266 cannot wake itself from deep sleep.
+
+- Sensor: TL-136, 0-5 m, 4-20 mA, 24 V  
 - Controller: ESP8266 D1 mini (ESPHome)  
-- Relay: 1‑channel 5 V module (switches +24 V to the sensor or the 5 V feed to the boost)  
+- Relay: 1-channel 5 V module (switches +24 V to the sensor or the 5 V feed to the boost)  
 - Shunt: 150 Ω (≥0.25 W) in return path (loop current → voltage)  
 - Power: 24 V (sensor) and 5 V (ESP + relay)
 
-High‑side switching (DEFAULT)
+High-side switching (DEFAULT)
 - Relay disconnects the 5 V feed going into the 24 V boost converter (or directly the +24 V sensor line
   if using a fixed 24 V supply).
 - Result: when off, the converter + sensor draw virtually zero current; ADC reference remains solid
   because grounds stay tied.
 - Recommended for stability and clean measurements.
 
-Quick wiring (high‑side 5 V feed)
+Quick wiring (high-side 5 V feed)
 ```text
 5V supply → Relay COM → Relay NO → Boost Vin+ → Boost 24V+ → Sensor (+)
 Sensor (−) → Shunt (150 Ω) → 24V GND → MCU GND
 A0 ← measurement point (top of shunt) through mandatory 1 kΩ series resistor
 Relay module: IN ← D5 (GPIO14), VCC ← 5V supply, GND ← MCU GND
-Optional: 100 nF–1 µF from measurement point to GND (analog low‑pass)
+Optional: 100 nF–1 µF from measurement point to GND (analog low-pass)
 ```
 
 Series protection & filtering (now mandatory)
 - 1 kΩ series resistor before A0 (overvoltage & transient protection)  
 - 100 nF–1 µF capacitor measurement point → GND (noise reduction)
 
-Alternative wiring (low‑side switching)
+Alternative wiring (low-side switching)
 - Relay opens the negative/ground path of the boost converter.
 - Pros: eliminates even the boost converter’s quiescent draw.
 - Cons: floating measurement node when open → requires pulldown + filtering, slightly higher risk of noise.
 
-Low‑side additional parts
+Low-side additional parts
 - Add 470 kΩ–1 MΩ pulldown from measurement node to MCU GND.
 - Keep the same 1 kΩ series resistor and 100 nF–1 µF capacitor.
 
@@ -163,15 +190,14 @@ persist across deep sleep.
   `cfg_surface_to_well_head` (surface ↓ head, positive),  
   `cfg_head_to_sensor`,  
   `cfg_head_to_pump1`,  
-  `cfg_head_to_pump2`,  
-  `cfg_head_to_bottom` (informational)
+  `cfg_head_to_pump2`
 - Filtering window (s): `cfg_filter_window_s` (EMA window for loop current)
 - Calibration points: `cfg_cal1_*`, `cfg_cal2_*` (currents + depths)
 - Shunt resistance (Ω): `cfg_shunt_resistance_ohm`
-- Sensor span (m): `cfg_sensor_span_m` (factory 5.0 m for TL‑136; change when using a different
+- Sensor span (m): `cfg_sensor_span_m` (factory 5.0 m for TL-136; change when using a different
   range sensor)
 - Sleep duration (min): `cfg_sleep_duration_min` (used to compute `deep_sleep.enter` duration)
-- Dry-detection threshold: `cfg_dry_current_band_mA` (loop current below this ⇒ “dry”)
+- Dry-detection threshold: `cfg_dry_current_band_mA` (loop current below this at publish ⇒ "waterlevel below minimum")
 
 Depth semantics
 - **Depth Below Head** (`water_depth_from_head`) is distance from the well head downward to the
@@ -188,81 +214,30 @@ Depth semantics
 Gather these physical measurements once; they define geometry and feed calibration:
 
 1. **Surface → Well Head** (`cfg_surface_to_well_head`):  
-   Vertical distance from ground surface down to the well head (positive; e.g. 1.00 m if head is 1 m below surface).
+   Vertical distance from ground surface down to the well head (positive; e.g. 1.00 m if head is 1 m
+   below surface).
 2. **Well Head → Sensor** (`cfg_head_to_sensor`):  
-   Depth of sensor below well head, usually the submerged cable length minus any slack at the top.
+   Distance from the well head down to the sensor position.
 3. **Well Head → Pump(s)** (`cfg_head_to_pump1`, `cfg_head_to_pump2`):  
-   Vertical distance from the well head down to each pump intake (for “Over Pump” height calculations).
-4. **Well Head → Bottom** (`cfg_head_to_bottom`, optional informational):  
-   Depth from well head to bottom of well; not used in current calculations.
-5. **Shunt Resistance** (`cfg_shunt_resistance_ohm`):  
-   Measure actual resistor value with power off; tolerance matters for current accuracy.
-6. **Sensor Span** (`cfg_sensor_span_m`):  
-   Factory range of the pressure sensor (TL‑136 default 5.0 m). Change only if you use a different range probe.
+   Depth of pumps below head (for “water over pump” entities).
 
-### Calibration Strategy
+### Two-point Calibration
 
-You need two known (current, depth) pairs referenced to the well head. Depths are always “Depth Below Head”.
+Concept:
+- Use two static water levels and their corresponding loop currents to define a line:
+  - Point 1: depth `d1` (from head) and current `I1`.
+  - Point 2: depth `d2` (from head) and current `I2`.
+- From this, the code derives a slope/intercept mapping current → depth.
 
-- **Point 1 (Near Dry)**: water surface at sensor top.  
-  Depth Below Head ≈ `head_to_sensor`. Loop current typically ≈ 4.00 mA.
-- **Point 2 (Full Span or Known Higher Level)**: water column above sensor near the top of sensor’s rated span.  
-  For span = 5 m and `head_to_sensor` = 5 m: Depth Below Head ≈ 0.0 m; loop current ≈ 20.00 mA.
-
-If you cannot obtain full span, choose any second stable level significantly different from Point 1 and record its
-loop current and depth. Ensure:
-- Current difference > 0.1 mA  
-- Depth difference > 0.01 m  
-
-Enter values into `cfg_cal1_current_mA`, `cfg_cal1_depth_m`, `cfg_cal2_current_mA`, `cfg_cal2_depth_m`.
-
-Range constraint (enforced in firmware)
-- Valid calibration depths must be within the sensor’s measurable “Depth Below Head” range:
-  
-  `[ head_to_sensor - sensor_span , head_to_sensor ]`.
-- If any calibration depth is outside this range, the calibration is ignored and the fallback curve is used.
-
-Fallback behavior
-- If calibration is invalid (bad values or too close), firmware falls back to the theoretical span curve:
-  
-  `Depth Below Head = (head_to_sensor) − (ColumnAboveSensor)`.
-
-### Worked Example (Your Setup)
-
-Assumptions
-- Well head is 1.20 m below the surface ⇒ `cfg_surface_to_well_head = 1.20` m.
-- Sensor is 6.00 m below the well head ⇒ `cfg_head_to_sensor = 6.00` m.
-- Sensor span is 5.00 m (TL‑136 default) ⇒ `cfg_sensor_span_m = 5.00` m.
-
-Measurable depth range (from well head)
-- Min depth = 6.00 − 5.00 = 1.00 m; Max depth = 6.00 m.  
-- Calibration depths must be within [1.00 m , 6.00 m].
-
-Choose calibration points
-- Point 1 (near dry): water just at sensor → Depth Below Head = 6.00 m, Current ≈ 4.00 mA.  
-- Point 2 (near full span): ≈5 m water over sensor → Depth Below Head = 1.00 m, Current ≈ 20.00 mA.
-
-Enter into HA
-- `cfg_cal1_current_mA = 4.00`, `cfg_cal1_depth_m = 6.00`  
-- `cfg_cal2_current_mA = 20.00`, `cfg_cal2_depth_m = 1.00`
-
-Cross‑checks
-- Depth Below Surface = Depth Below Head + `cfg_surface_to_well_head` (add 1.20 m to the above
-  depths if you want surface‑referenced values).
-- If you pick a different second point (not full span), ensure it still lies between 1.00 m and
-  6.00 m and its current is stable.
-
-### Recommended Order
-1. Set geometry numbers.  
-2. Set shunt resistance & sensor span.  
-3. Let the device run; confirm stable loop current.  
-4. Enter calibration point 1.  
-5. Wait for a distinct water level change (or fill) and enter point 2.  
-6. Verify Depth sensors show plausible values vs manual measurement.
+Typical choice:
+- **Point 1**: sensor completely dry / just at water surface (e.g. Depth from head where sensor
+  starts to see water, or a known shallow level).
+- **Point 2**: a deeper, stable level within 1–6 m span.
 
 Defect / disconnect detection
-- Readings with loop current < 4 mA (below nominal 4‑20 mA range) are treated as invalid and user‑facing
-  level sensors publish no value (suppressed as NaN).
+- Readings with loop current below the valid range are treated as invalid; the template code uses
+  a cutoff of about **3.9 mA** as "too low" to be a valid 4-20 mA signal.
+- When currents are invalid, user-facing level sensors publish no value (suppressed as NaN).
 
 ### Filtering & Warmup
 
@@ -272,63 +247,69 @@ Loop current (`loop_current_filtered`) uses an exponential moving average:
 avg = avg + alpha * (raw - avg)
 alpha = dt / window_s     (dt = update period)
 ```
-- `cfg_filter_window_s` controls the smoothing window (seconds).
-- A short warmup phase discards the first few EMA samples to avoid skewed initial values.
 
-Depth filtering:
-- `well_depth_raw` computes calibrated “Depth Below Head (Raw)” from the filtered loop current.
-- A 5‑sample ring buffer is maintained during the burst; its mean is stored in the global
-  `well_depth_avg5`.
-- The published depth (`water_depth_from_head`) returns `well_depth_avg5` **only after** `publish_ready`
-  becomes true, so HA sees a single, smoothed depth per cycle.
+- `cfg_filter_window_s` controls the smoothing window (seconds).
+- A short warmup phase discards the first few EMA samples to avoid skewed initial values; during
+  warmup the filtered current reports `NaN`.
+
+Depth calculation:
+- `well_depth_raw` computes calibrated "Depth Below Head (Raw)" from the **filtered** loop current,
+  using the two-point calibration if valid, otherwise a fallback sensor-span curve.
+- The published depth (`water_depth_from_head`) simply returns the calibrated depth once per cycle,
+  **only after** `publish_ready` becomes true, so HA sees a single, smoothed depth per wake cycle.
 
 ---
 
 ## Deep Sleep & Burst Behavior
 
 Deep sleep
-- Typical cycle: wake → energize sensor → stabilize → measure (burst) → publish once → power off sensor
-  → remain awake briefly → sleep.
+- Typical cycle: wake → standardized measurement → single publish → optional delay → deep sleep.
 - Sleep duration is **dynamic**:
-  - `complete_cycle_and_sleep` calls `deep_sleep.enter` with
+  - `check_deep_sleep` calls `deep_sleep.enter` with  
     `sleep_duration = cfg_sleep_duration_min * 60 * 1000 ms`.
   - If `cfg_sleep_duration_min` is invalid or <1, a safety default of 10 min is used.
-- Deep sleep is **only** entered from this script; there are no fixed `run_duration` or `sleep_duration`
-  values in the `deep_sleep:` block.
+- Deep sleep is **only** entered from this script; there are no fixed `run_duration` or
+  `sleep_duration` values in the `deep_sleep:` block.
 
-High‑rate sampling phase
-- On boot, after Wi‑Fi, a 2 s stabilization delay runs.  
-- Then a 5 s high‑rate sampling loop executes every 500 ms (~2 Hz).  
-- Each 500 ms, the raw measurement chain is explicitly updated:
-
-  - `shunt_adc_raw.update()`  
-  - `shunt_voltage.update()`  
-  - `loop_current_raw.update()`  
-  - `loop_current_filtered.update()`  
-  - `well_depth_raw.update()` (which also updates the 5‑sample average)
-
-Single publish gating
-- Until `publish_ready` is set, user‑facing depth sensors (`water_depth_from_head`,
-  `water_depth_from_surface`, `water_over_pump1`, `water_over_pump2`) all return `NaN`.  
-- After the burst:
-  1. `publish_ready` is set to `true`.
-  2. A final `component.update` is called on all user‑facing depth entities.
-  3. A short 500 ms delay ensures the values reach HA.
+Standardized measurement cycle (`run_measurement_cycle`)
+- Powers the sensor via `sensor_power` relay.
+- Waits 3 s warm-up.
+- Clears `publish_ready`.
+- Collects 10 samples at 2 Hz, updating:
+  - `shunt_adc_raw`
+  - `loop_current_raw`
+  - `loop_current_filtered`
+- Updates internal derived values:
+  - `sensor_column_filtered_m`
+  - `well_depth_raw`
+- Sets `publish_ready = true`.
+- Updates diagnostics and user-facing depth entities once.
+- Waits 1 s to let HA receive values, then calls `check_deep_sleep`.
 
 Relay control & extra awake time
-- Immediately after the single publish:
-  - `sensor_power` relay is turned **OFF** to un‑power the sensor and boost.
-  - The device then stays awake for another 10 s (Wi‑Fi/API still available).
-- Only after this 10 s period does the script attempt to enter deep sleep (unless prevented).
+- In `check_deep_sleep`:
+  - If either `Stay Awake` or `ha_prevent_deep_sleep` is ON:
+    - Deep sleep is prevented.
+    - After a 10 s delay, another `run_measurement_cycle` is started.
+  - If both flags are OFF:
+    - The device logs that it will enter deep sleep soon.
+    - Waits 10 s (grace period with sensor still powered).
+    - Turns `sensor_power` OFF.
+    - Waits 2 s.
+    - Calls `deep_sleep.enter(...)` with the computed sleep duration.
 
-Burst Mode & Stay Awake
+Stay Awake & HA helper
 - **Stay Awake** (`deep_sleep_disable` switch):
-  - Turning ON: prevents deep sleep and starts a 30‑minute auto‑off script.
-  - Turning OFF: allows normal deep sleep behavior.
-- **Burst Mode** (`burst_mode` switch):
-  - When ON: deep sleep is suppressed at the end of the cycle; the device continues to run further
-    cycles instead of sleeping.
-  - Auto‑off after 30 minutes (switch turned OFF and deep sleep allowed again).
+  - Turning ON:
+    - immediately calls `deep_sleep.prevent` on `main_deep_sleep`.
+    - starts the `auto_off_stay_awake` script (10 minutes).
+  - After 10 minutes, if still ON, the script logs and turns the switch OFF.
+  - Turning OFF:
+    - re-allows deep sleep via `deep_sleep.allow`.
+- **HA Helper Prevent Deep Sleep**:
+  - `binary_sensor.ha_prevent_deep_sleep` mirrors `input_boolean.prevent_deep_sleep` from HA.
+  - While this helper is ON, `check_deep_sleep` will not enter deep sleep; it will instead schedule
+    another measurement cycle after 10 s.
 
 Installation checklist
 1. Build hardware; share ground between 24 V and 5 V rails.  
@@ -341,46 +322,106 @@ Installation checklist
 
 ## Diagnostics & Entities
 
-User‑facing sensors
-- `water_depth_from_head` (Depth Below Head – 5‑sample averaged, gated by `publish_ready`)
-- `water_depth_from_surface` (Depth Below Surface – derived from averaged head depth)
-- `water_over_pump1` (Over Pump 1 – height of water above Pump 1)
-- `water_over_pump2` (Over Pump 2 – height of water above Pump 2)
-- `loop_current_filtered` (Loop Current)
+### User-facing sensors
 
-Diagnostic (internal) entities
-- `shunt_adc_raw` (ADC Internal 0–1 V raw)
-- `shunt_voltage` (ADC × 3.2 scaling to actual shunt voltage)
-- `loop_current_raw` (raw loop current mA)
-- `sensor_column_filtered_m` (filtered water column above sensor)
-- `well_depth_raw` (Depth Below Head (Raw), used to build the 5‑sample average)
-- Global: `well_depth_avg5` (5‑sample average below head, used by `water_depth_from_head`)
+- `water_depth_from_head`  
+  Depth Below Head – calibrated EMA-filtered depth, gated by `publish_ready`.
+- `water_depth_from_surface`  
+  Depth Below Surface – derived from Depth Below Head + `cfg_surface_to_well_head`.
+- `water_over_pump1`  
+  Water height above Pump 1 (positive = pump submerged).
+- `water_over_pump2`  
+  Water height above Pump 2 (positive = pump submerged).
+- `loop_current_filtered`  
+  Loop current (mA), EMA-filtered with warmup.
+
+### Diagnostic (internal/advanced) entities
+
+- `shunt_adc_raw`  
+  ADC internal 0–1 V raw (A0).
+- `shunt_voltage`  
+  ADC × 3.2 scaling to actual shunt voltage.
+- `loop_current_raw`  
+  Raw loop current (mA) derived from shunt voltage.
+- `sensor_column_filtered_m`  
+  Filtered water column above sensor (0–`cfg_sensor_span_m`), internal helper.
+- `well_depth_raw`  
+  Depth Below Head (raw calibrated from filtered current); used as the core depth for publishing.
 
 Error detection
-- Very low loop currents (<4 mA) are treated as invalid signals (open loop / defect),
-  and no user‑facing depth is published (NaN).
+- Very low loop currents (below ~3.9 mA) are treated as invalid signals (open loop / defect),
+  and user-facing depth and “over pump” sensors publish no value (NaN).
+
+### Switches & Binary Sensors
 
 Switches
-- `sensor_power` (Sensor Power relay)
-- `deep_sleep_disable` (Stay Awake)
-- `burst_mode` (Burst Mode – prevents deep sleep, auto‑off 30 min)
+- `sensor_power` (Sensor Power relay)  
+  Controls the high-side relay that powers the boost converter / sensor. Normally always ON while
+  the device is awake; turned OFF before deep sleep.
+- `deep_sleep_disable` (Stay Awake)  
+  Prevents deep sleep and auto-turns off after 10 minutes.
 
-Dry / Environmental Detection
-- `water_dry` (Well Dry – if present in your setup):
-  - Indicates the water surface has dropped to (or below) the sensor top.
-  - Typically implemented using:
-    - Loop current below threshold `cfg_dry_current_band_mA` (default 5.00 mA)
-    - Stability requirement over a time window to avoid noise.
+Binary sensors
+- `waterlevel_below_minimum` (Waterlevel Below Minimum, device class = `problem`)  
+  Evaluated only at the final publish of a measurement cycle (when `publish_ready` is true).  
+  Reports ON if the filtered loop current is below `cfg_dry_current_band_mA` at that moment.
+- `ha_prevent_deep_sleep` (internal)  
+  Mirrors `input_boolean.prevent_deep_sleep` from Home Assistant; used only for logic, not meant
+  for dashboards.
+
+### Step-response debug
+
+The firmware includes a synthetic step-response test for tuning and diagnostics.
+
+Button
+- `button.trigger_step_response` (Trigger Step-response)  
+  Starts `run_step_response_debug`:
+  - Prevents deep sleep.
+  - Powers the sensor.
+  - Generates a synthetic step in loop current corresponding to a 2 m change in water level.
+  - Feeds both raw and EMA-filtered paths.
+  - Computes dynamic metrics:
+    - t90 (time to 90 % of the step)
+    - t_settle (time to settle within a narrow band)
+    - noise reduction factor
+    - deviations at 1/2/3 s after the step
+  - Publishes per-sample debug log to the logger.
+  - Populates dedicated step-response entities (see below).
+  - Re-allows deep sleep and resumes the normal `run_measurement_cycle`.
+
+Sensors
+- `step_response_voltage_in` – last synthetic shunt voltage used during debug  
+- `step_response_depth_unfiltered` – unfiltered depth equivalent during debug  
+- `step_response_depth_filtered` – filtered depth equivalent during debug  
+- `step_response_t90_s` – time to 90 % of step (seconds)  
+- `step_response_t_settle_s` – settling time (seconds)  
+- `step_response_noise_reduction` – noise reduction factor (unfiltered vs filtered)  
+- `step_response_dev1` / `step_response_dev2` / `step_response_dev3` – deviations at 1, 2, 3 s
+
+Text sensor
+- `step_response_report` – compact JSON string summarizing the last step-response (e.g.  
+  `{"t90_s":..., "t_settle_s":..., "noise_reduction":..., "dev1_m":..., ...}`)  
+  Useful for copy-paste into analysis tools.
+
+### Configuration numbers (summary)
 
 Configuration numbers (prefix omitted in HA UI display name)
-- `cfg_surface_to_well_head`, `cfg_head_to_sensor`, `cfg_head_to_pump1`,
-  `cfg_head_to_pump2`, `cfg_head_to_bottom`
-- `cfg_filter_window_s`, `cfg_cal1_current_mA`, `cfg_cal1_depth_m`,
-  `cfg_cal2_current_mA`, `cfg_cal2_depth_m`
-- `cfg_shunt_resistance_ohm`, `cfg_sensor_span_m`
-- `cfg_sleep_duration_min`
-- Dry detection:
-  - `cfg_dry_current_band_mA` (current threshold; loop current below this ⇒ dry)
+- Geometry:
+  - `cfg_surface_to_well_head`
+  - `cfg_head_to_sensor`
+  - `cfg_head_to_pump1`
+  - `cfg_head_to_pump2`
+- Filtering:
+  - `cfg_filter_window_s`
+- Calibration:
+  - `cfg_cal1_current_mA`, `cfg_cal1_depth_m`
+  - `cfg_cal2_current_mA`, `cfg_cal2_depth_m`
+- Electrical & span:
+  - `cfg_shunt_resistance_ohm`
+  - `cfg_sensor_span_m`
+- Sleep & dry detection:
+  - `cfg_sleep_duration_min`
+  - `cfg_dry_current_band_mA` (current threshold; loop current below this at publish ⇒ "below minimum")
 
 ---
 
@@ -388,13 +429,13 @@ Configuration numbers (prefix omitted in HA UI display name)
 
 See full configuration: `waterlevel-sensor.yaml`.
 
-Filtering, calibration, sleep control, and relay logic are implemented via template sensors,
-globals, scripts, and `deep_sleep.enter` in the main file.
+Filtering, calibration, sleep control, relay logic, dry detection, and step-response debug are
+implemented via template sensors, globals, scripts, and `deep_sleep.enter` in the main file.
 
 ### ASCII Wiring Diagrams
 
-High‑side wiring (default — switching 5 V feed to boost)
-```
+High-side wiring (default — switching 5 V feed to boost)
+```text
                             HOUSE / BASEMENT
                     ┌──────────────────────────────────────────────┐
                     │                                              │
@@ -402,7 +443,7 @@ High‑side wiring (default — switching 5 V feed to boost)
                     │      +5V ─────┐                              │
                     │               │                              │
                     │          ┌────┴───────┐                      │
-                    │          │  RELAY    │ (1‑ch, 5 V)          │
+                    │          │  RELAY    │ (1-ch, 5 V)           │
                     │          │  COM      │                      │
                     │          │           │                      │
                     │          │  NO ─────────────► Boost Vin+ ───► 24V+ ─── Cable 1 ───► Sensor (+)
@@ -416,79 +457,38 @@ High‑side wiring (default — switching 5 V feed to boost)
                     │  Sensor (−) ── Cable 2 ───────────────────┘          │          │
                     │                                                      ▼          │
                     │                                             Measurement node   │
-                    │                                             | | 1 kΩ series → A0│
-                    │                                             | | 100 nF–1 µF → GND│
-                    │                                                           GND   │
-                    │          D1 MINI (ESP8266)                             │  │
-                    │      5V_in  ◄──────────────────────────(same +5V)      │  │
-                    │      GND    ───────────────────────────────────────────┴──┘
-                    │      D5 (GPIO14) ───────────────► Relay IN
-                    │      5V          ───────────────► Relay VCC
-                    │      GND         ───────────────► Relay GND
-                    └────────────────────────────────────────────────────────┘
+                    │                                              (top of shunt)    │
+                    │                                              │                 │
+                    │                                             1 kΩ               │
+                    │                                             │                 │
+                    │                        ┌────────────────────┴───────────────┐  │
+                    │                        │            ANALOG FRONTEND         │  │
+                    │                        │                                    │  │
+                    │                        │   1 kΩ series to A0                │  │
+                    │                        │   + 100 nF–1 µF → GND              │  │
+                    │                        └──────────► Measurement point → D1  │  │
+                    │                                              │               │  │
+                    │          D1 MINI (ESP8266)                   │               │  │
+                    │                                              │               │  │
+                    │     5V_in  ◄── 5V supply / USB               │               │  │
+                    │     GND    ─────────────────────────┬───────┘ (shared GND)  │  │
+                    │     A0   ◄──────────────────────────┘                       │  │
+                    │                                                              │  │
+                    │     D5 (GPIO14) ───────────────► Relay IN                    │  │
+                    │     5V          ───────────────► Relay VCC                   │  │
+                    │     GND         ───────────────► Relay GND                   │  │
+                    └──────────────────────────────────────────────────────────────┘
 
                             WELL SHAFT
                     ┌──────────────────────────────────────────────┐
-                    │        TL‑136 LEVEL SENSOR                   │
+                    │        TL-136 LEVEL SENSOR                   │
                     │      (+)  ◄──────────── Cable 1              │
                     │      (−)  ─────────────► Cable 2             │
                     └──────────────────────────────────────────────┘
 ```
 
-<details>
-<summary>Low‑side wiring (alternative) — click to expand</summary>
-
-```
-                                        HOUSE / BASEMENT
-                    ┌──────────────────────────────────────────────┐
-                    │                                              │
-                    │            24V SUPPLY                        │
-                    │                                              │
-                    │      +24V ─────────┐                         │
-                    │                    │                         │
-                    │                    │      RELAY MODULE       │
-                    │                    │      (1-ch, 5 V)        │
-                    │                    │                         │
-                    │                ┌───┴───────┐                 │
-                    │                │   COM     │                 │
-                    │                │           │                 │
-                    │                │   NO ───────────── Cable 1 ─┴──► down to well
-                    │                │           │                 │
-                    │                └───────────┘                 │
-                    │                    │                         │
-                    │                   GND ───────┐               │
-                    │                              │               │
-                    │        SHUNT 150 Ω           │               │
-                    │         (≥0.25 W)            │               │
-                    │                              │               │
-                    │   24V-GND ─────────────┬◄────┴──[ R_shunt ]──┴─── Cable 2 ◄── from well
-                    │                        │
-                    │                        └──────────► Measurement point → D1 mini A0
-                    │                                              │
-                    │          D1 MINI (ESP8266)                   │
-                    │                                              │
-                    │     5V_in  ◄── 5V supply / USB              │
-                    │     GND    ─────────────────────────┬───────┘ (shared ground with 24V-GND)
-                    │     A0   ◄──────────────────────────┘ (top end of shunt)
-                    │
-                    │     D5 (GPIO14) ───────────────► Relay IN
-                    │     5V          ───────────────► Relay VCC
-                    │     GND         ───────────────► Relay GND
-                    │
-                    └──────────────────────────────────────────────┘
-
-                                        WELL SHAFT
-                    ┌──────────────────────────────────────────────┐
-                    │                                              │
-                    │        TL-136 LEVEL SENSOR                   │
-                    │                                              │
-                    │      (+)  ◄──────────── Cable 1              │
-                    │      (-)  ─────────────► Cable 2             │
-                    │                                              │
-                    └──────────────────────────────────────────────┘
-```
-
-</details>
+Low-side wiring (alternative) — click to expand in the original repo if you keep the `<details>` wrapper.
+You can reuse the previous ASCII diagram; the logic here has not changed, only the firmware.
 
 ---
 
@@ -496,5 +496,6 @@ High‑side wiring (default — switching 5 V feed to boost)
 
 License: See `LICENSE`.
 
-Disclaimer: Use at your own risk. Handle higher‑voltage supplies safely. Ensure waterproof integrity
+Disclaimer: Use at your own risk. Handle higher-voltage supplies safely. Ensure waterproof integrity
 of downhole cabling. Contributions welcome!
+
