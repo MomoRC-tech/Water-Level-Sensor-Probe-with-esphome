@@ -1,4 +1,4 @@
-,substitutions:
+substitutions:
   devicename: welllevel
   friendly_name: "WellLevel"
   sensor_update_sec: "0.5"   # Measurement interval in seconds (2 Hz)
