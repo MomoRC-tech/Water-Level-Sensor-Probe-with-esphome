@@ -118,26 +118,25 @@ script:
           count: 10
           then:
             - lambda: |-
-                // Base ADC reading
                 id(shunt_adc_raw).update();
-
-                // Raw current from ADC (used by filtered current)
                 id(loop_current_raw).update();
-
-                // Exponential moving average filter on current
                 id(loop_current_filtered).update();
             - delay: 500ms
 
-      # 5) Single recomputation of second-level derivations for this cycle
-      #    (no need to do these 10×)
+      # 5) Internal derivations (not exposed to HA)
       - component.update: sensor_column_filtered_m
       - component.update: well_depth_raw
-      - component.update: shunt_voltage   # diagnostic: one value per cycle
 
-      # 6) Now allow publishing and push the "final" user entities once
+      # 6) Now allow publishing and push ALL visible entities once
       - lambda: |-
           id(publish_ready) = true;
 
+      # Diagnostics visible in HA
+      - component.update: shunt_voltage
+      - component.update: loop_current_raw
+      - component.update: loop_current_filtered
+
+      # Final “user” depth entities
       - component.update: water_depth_from_head
       - component.update: water_depth_from_surface
       - component.update: water_over_pump1
@@ -448,19 +447,16 @@ sensor:
     entity_category: diagnostic
     filters:
       - lambda: |-
-          // Do not publish NaN values – keep last good value in HA
+          // Only publish once per cycle when publish_ready is true
+          if (!id(publish_ready)) return {};
           if (isnan(x)) return {};
           return x;
     lambda: |-
-      // Only update when the sensor relay is ON
       if (!id(sensor_power).state) {
         return NAN;
       }
-
       float u_adc = id(shunt_adc_raw).state;
       if (isnan(u_adc)) return NAN;
-
-      // D1 mini: ADC 0..1 V corresponds to ~0..3.2 V at A0
       return u_adc * 3.2f;
 
   # 2.3 Raw loop current (mA) from shunt voltage
@@ -472,25 +468,19 @@ sensor:
     entity_category: diagnostic
     filters:
       - lambda: |-
+          if (!id(publish_ready)) return {};
           if (isnan(x)) return {};
           return x;
     lambda: |-
       if (!id(sensor_power).state) {
-        return NAN;  // Sensor off
-      }
-
-      float u_adc = id(shunt_adc_raw).state;
-      if (isnan(u_adc)) return NAN;
-
-      // Convert internal ADC (0..1 V) to A0 voltage (0..~3.2 V)
-      float u = u_adc * 3.2f;                  // Volts
-      float r = id(cfg_shunt_resistance_ohm).state; // Ohms
-      if (isnan(r) || r < 1.0f) {
         return NAN;
       }
-
+      float u_adc = id(shunt_adc_raw).state;
+      if (isnan(u_adc)) return NAN;
+      float u = u_adc * 3.2f;
+      float r = id(cfg_shunt_resistance_ohm).state;
+      if (isnan(r) || r < 1.0f) return NAN;
       float i_mA = (u / r) * 1000.0f;
-      // Treat currents clearly below nominal 4 mA as invalid (open loop / defect)
       if (i_mA < 3.9f) return NAN;
       return i_mA;
 
@@ -506,45 +496,25 @@ sensor:
     icon: "mdi:current-ac"
     filters:
       - lambda: |-
-          // Do not publish NaN values – keep last good value in HA
+          if (!id(publish_ready)) return {};
           if (isnan(x)) return {};
           return x;
     lambda: |-
-      if (!id(sensor_power).state) {
-        return NAN;
-      }
-
+      if (!id(sensor_power).state) return NAN;
       float raw = id(loop_current_raw).state;
-      if (isnan(raw)) {
-        return NAN;
-      }
-
+      if (isnan(raw)) return NAN;
       float window_s = id(cfg_filter_window_s).state;
-      if (isnan(window_s) || window_s < 1.0f) {
-        window_s = 1.0f;
-      }
-
+      if (isnan(window_s) || window_s < 1.0f) window_s = 1.0f;
       const float dt = ${sensor_update_sec};
       float alpha = dt / window_s;
       if (alpha > 1.0f) alpha = 1.0f;
-
       static float avg = NAN;
       static int warmup_count = 0;
-      const int WARMUP_SAMPLES = 3;  // Number of cycles for warmup
-
-      if (isnan(avg)) {
-        avg = raw;              // Initialization
-      } else {
-        avg = avg + alpha * (raw - avg);
-      }
-
+      const int WARMUP_SAMPLES = 3;
+      if (isnan(avg)) avg = raw;
+      else           avg = avg + alpha * (raw - avg);
       warmup_count++;
-
-      // During warmup we still compute, but filter above will drop NaN
-      if (warmup_count <= WARMUP_SAMPLES) {
-        return NAN;
-      }
-
+      if (warmup_count <= WARMUP_SAMPLES) return NAN;
       return avg;
 
   # 2.5 Filtered sensor column (0..5 m above sensor) – diagnostic only
