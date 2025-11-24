@@ -848,7 +848,7 @@ number:
     entity_category: config
     optimistic: true
     restore_value: true
-    initial_value: 3.0
+    initial_value: 1.5
     min_value: 1.0
     max_value: 10.0
     step: 0.5
