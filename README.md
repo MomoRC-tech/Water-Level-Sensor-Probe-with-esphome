@@ -435,57 +435,10 @@ implemented via template sensors, globals, scripts, and `deep_sleep.enter` in th
 ### ASCII Wiring Diagrams
 
 High-side wiring (default — switching 5 V feed to boost)
-```text
-                            HOUSE / BASEMENT
-                    ┌──────────────────────────────────────────────┐
-                    │                                              │
-                    │  5V SUPPLY / USB                             │
-                    │      +5V ─────┐                              │
-                    │               │                              │
-                    │          ┌────┴───────┐                      │
-                    │          │  RELAY    │ (1-ch, 5 V)           │
-                    │          │  COM      │                      │
-                    │          │           │                      │
-                    │          │  NO ─────────────► Boost Vin+ ───► 24V+ ─── Cable 1 ───► Sensor (+)
-                    │          └───────────┘                      │
-                    │               │                              │
-                    │              GND ────────────────────────────┬────────────────────┐
-                    │                                              │                    │
-                    │                                      150 Ω shunt                 │
-                    │                                 (≥0.25 W)  ┌──────────┐          │
-                    │                                           │          │          │
-                    │  Sensor (−) ── Cable 2 ───────────────────┘          │          │
-                    │                                                      ▼          │
-                    │                                             Measurement node   │
-                    │                                              (top of shunt)    │
-                    │                                              │                 │
-                    │                                             1 kΩ               │
-                    │                                             │                 │
-                    │                        ┌────────────────────┴───────────────┐  │
-                    │                        │            ANALOG FRONTEND         │  │
-                    │                        │                                    │  │
-                    │                        │   1 kΩ series to A0                │  │
-                    │                        │   + 100 nF–1 µF → GND              │  │
-                    │                        └──────────► Measurement point → D1  │  │
-                    │                                              │               │  │
-                    │          D1 MINI (ESP8266)                   │               │  │
-                    │                                              │               │  │
-                    │     5V_in  ◄── 5V supply / USB               │               │  │
-                    │     GND    ─────────────────────────┬───────┘ (shared GND)  │  │
-                    │     A0   ◄──────────────────────────┘                       │  │
-                    │                                                              │  │
-                    │     D5 (GPIO14) ───────────────► Relay IN                    │  │
-                    │     5V          ───────────────► Relay VCC                   │  │
-                    │     GND         ───────────────► Relay GND                   │  │
-                    └──────────────────────────────────────────────────────────────┘
 
-                            WELL SHAFT
-                    ┌──────────────────────────────────────────────┐
-                    │        TL-136 LEVEL SENSOR                   │
-                    │      (+)  ◄──────────── Cable 1              │
-                    │      (−)  ─────────────► Cable 2             │
-                    └──────────────────────────────────────────────┘
-```
+<p align="center">
+  <img src="schematic.PNG" alt="Basic schematic" width="600">
+</p>
 
 Low-side wiring (alternative) — click to expand in the original repo if you keep the `<details>` wrapper.
 You can reuse the previous ASCII diagram; the logic here has not changed, only the firmware.
