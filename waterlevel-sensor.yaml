@@ -90,8 +90,64 @@ globals:
     restore_value: false
     initial_value: 'false'
 
+  # NEW: step-response debug state
+  - id: step_debug_active
+    type: bool
+    restore_value: false
+    initial_value: 'false'
+
+  - id: step_debug_last_voltage
+    type: float
+    restore_value: false
+    initial_value: 'NAN'
+
+  - id: step_debug_last_depth_unf
+    type: float
+    restore_value: false
+    initial_value: 'NAN'
+
+  - id: step_debug_last_depth_f
+    type: float
+    restore_value: false
+    initial_value: 'NAN'
+
+  - id: step_debug_filtered_current
+    type: float
+    restore_value: false
+    initial_value: 'NAN'
+
+  - id: step_debug_filter_initialized
+    type: bool
+    restore_value: false
+    initial_value: 'false'
+
+  - id: step_debug_sample_index
+    type: int
+    restore_value: false
+    initial_value: '0'
+
+  - id: step_debug_log
+    type: std::string
+    restore_value: false
+    initial_value: ""
+
+  # simple analysis: deviation filtered – unfiltered after 1/2/3 s
+  - id: step_debug_dev1
+    type: float
+    restore_value: false
+    initial_value: 'NAN'
+  - id: step_debug_dev2
+    type: float
+    restore_value: false
+    initial_value: 'NAN'
+  - id: step_debug_dev3
+    type: float
+    restore_value: false
+    initial_value: 'NAN'
+
 script:
-  # One standardized measurement sequence:
+  ##################################################################################################
+  # One standardized measurement sequence, which is bypassed when step-response debug mode is active:
   # - make sure relay is ON
   # - warm-up
   # - 10 samples @ 2 Hz (every 500 ms), updating the full chain
@@ -99,57 +155,65 @@ script:
   # - call check_deep_sleep() to decide next step
   - id: run_measurement_cycle
     then:
-      - logger.log:
-          level: DEBUG
-          format: "run_measurement_cycle: start"
-
-      # 1) Ensure sensor is powered
-      - switch.turn_on: sensor_power
-
-      # 2) Warm-up time for sensor & filters
-      - delay: 3s
-
-      # 3) Clear publish gate while we collect samples
-      - lambda: |-
-          id(publish_ready) = false;
-
-      # 4) 10 samples @ 2 Hz (500 ms) – only what is needed for math
-      - repeat:
-          count: 10
+      - if:
+          condition:
+            lambda: 'return id(step_debug_active);'
           then:
+            - logger.log:
+                level: DEBUG
+                format: "run_measurement_cycle: skipped (step-response debug active)"
+          else:
+            - logger.log:
+                level: DEBUG
+                format: "run_measurement_cycle: start"
+
+            # 1) Ensure sensor is powered
+            - switch.turn_on: sensor_power
+
+            # 2) Warm-up time for sensor & filters
+            - delay: 3s
+
+            # 3) Clear publish gate while we collect samples
             - lambda: |-
-                id(shunt_adc_raw).update();
-                id(loop_current_raw).update();
-                id(loop_current_filtered).update();
-            - delay: 500ms
+                id(publish_ready) = false;
 
-      # 5) Internal derivations (not exposed to HA)
-      - component.update: sensor_column_filtered_m
-      - component.update: well_depth_raw
+            # 4) 10 samples @ 2 Hz (500 ms) – only what is needed for math
+            - repeat:
+                count: 10
+                then:
+                  - lambda: |-
+                      id(shunt_adc_raw).update();
+                      id(loop_current_raw).update();
+                      id(loop_current_filtered).update();
+                  - delay: 500ms
 
-      # 6) Now allow publishing and push ALL visible entities once
-      - lambda: |-
-          id(publish_ready) = true;
+            # 5) Internal derivations (not exposed directly)
+            - component.update: sensor_column_filtered_m
+            - component.update: well_depth_raw
 
-      # Diagnostics visible in HA
-      - component.update: shunt_voltage
-      - component.update: loop_current_raw
-      - component.update: loop_current_filtered
+            # 6) Now allow publishing and push all visible entities once
+            - lambda: |-
+                id(publish_ready) = true;
 
-      # Final “user” depth entities
-      - component.update: water_depth_from_head
-      - component.update: water_depth_from_surface
-      - component.update: water_over_pump1
-      - component.update: water_over_pump2
+            # Diagnostics visible in HA
+            - component.update: shunt_voltage
+            - component.update: loop_current_raw
+            - component.update: loop_current_filtered
 
-      # Give API a moment to send values
-      - delay: 1s
+            # Final “user” depth entities
+            - component.update: water_depth_from_head
+            - component.update: water_depth_from_surface
+            - component.update: water_over_pump1
+            - component.update: water_over_pump2
 
-      # 7) Decide if we go to sleep or schedule another measurement
-      - script.execute: check_deep_sleep
+            # Give API a moment to send values
+            - delay: 1s
+
+            # 7) Decide if we go to sleep or schedule another measurement
+            - script.execute: check_deep_sleep
 
 
-
+  ###########################################################
   # Decide whether to deep sleep or stay awake and re-measure
   - id: check_deep_sleep
     then:
@@ -195,7 +259,7 @@ script:
                   if (isnan(mins) || mins < 1.0f) mins = 10.0f;
                   return (uint32_t) (mins * 60.0f * 1000.0f);
 
-
+  ##################################
   # Auto-off for "Stay Awake" switch
   - id: auto_off_stay_awake
     then:
@@ -206,6 +270,263 @@ script:
           then:
             - logger.log: "Auto-off Stay Awake after 10 min"
             - switch.turn_off: deep_sleep_disable
+
+  #################################
+  # run and calculate step response
+  - id: run_step_response_debug
+    then:
+      - logger.log:
+          level: DEBUG
+          format: "Step-response debug: starting"
+
+      # make sure sensor is powered during debug
+      - switch.turn_on: sensor_power
+
+      # mark debug active and init state
+      - lambda: |-
+          id(step_debug_active) = true;
+          id(step_debug_sample_index) = 0;
+          id(step_debug_log).clear();
+          id(step_debug_log).reserve(1024);
+          id(step_debug_log) = "[";
+          id(step_debug_filter_initialized) = false;
+          id(step_debug_dev1) = NAN;
+          id(step_debug_dev2) = NAN;
+          id(step_debug_dev3) = NAN;
+
+      - deep_sleep.prevent: main_deep_sleep
+
+      #######################################
+      # Phase 1: 3.0 V for 2 s (4 samples)
+      #######################################
+      - repeat:
+          count: 4
+          then:
+            - lambda: |-
+                const float dt = ${sensor_update_sec};   // 0.5 s
+                const float voltage = 3.0f;
+                float r = id(cfg_shunt_resistance_ohm).state;
+                if (isnan(r) || r < 1.0f) r = 165.0f;
+
+                float current = (voltage / r) * 1000.0f;  // mA
+
+                // --- compute unfiltered depth from current (same calibration as well_depth_raw) ---
+                float i1 = id(cfg_cal1_current_mA).state;
+                float i2 = id(cfg_cal2_current_mA).state;
+                float d1 = id(cfg_cal1_depth_m).state;
+                float d2 = id(cfg_cal2_depth_m).state;
+                float span = id(cfg_sensor_span_m).state;
+                float d_sensor = id(cfg_head_to_sensor).state;
+                if (isnan(span) || span <= 0.0f) span = 5.0f;
+
+                bool calib_valid = true;
+                if (isnan(i1) || isnan(i2) || isnan(d1) || isnan(d2)) calib_valid = false;
+                if (fabs(i2 - i1) < 0.1f) calib_valid = false;
+                if (fabs(d2 - d1) < 0.01f) calib_valid = false;
+
+                float depth_unf;
+                if (calib_valid) {
+                  float m = (d2 - d1) / (i2 - i1);
+                  float b = d1 - m * i1;
+                  depth_unf = m * current + b;
+                } else {
+                  const float I_MIN = 4.0f;
+                  const float I_MAX = 20.0f;
+                  float level = (current - I_MIN) / (I_MAX - I_MIN) * span;
+                  if (level < 0.0f) level = 0.0f;
+                  if (level > span) level = span;
+                  depth_unf = d_sensor - level;
+                }
+
+                // --- EMA filter on current (debug-only state, same as loop_current_filtered) ---
+                float window_s = id(cfg_filter_window_s).state;
+                if (isnan(window_s) || window_s < 1.0f) window_s = 1.0f;
+                float alpha = dt / window_s;
+                if (alpha > 1.0f) alpha = 1.0f;
+
+                if (!id(step_debug_filter_initialized)) {
+                  id(step_debug_filtered_current) = current;
+                  id(step_debug_filter_initialized) = true;
+                } else {
+                  id(step_debug_filtered_current) =
+                    id(step_debug_filtered_current) +
+                    alpha * (current - id(step_debug_filtered_current));
+                }
+
+                // depth from filtered current (same calibration as above)
+                float depth_f;
+                float i = id(step_debug_filtered_current);
+                if (calib_valid) {
+                  float m = (d2 - d1) / (i2 - i1);
+                  float b = d1 - m * i1;
+                  depth_f = m * i + b;
+                } else {
+                  const float I_MIN = 4.0f;
+                  const float I_MAX = 20.0f;
+                  float level = (i - I_MIN) / (I_MAX - I_MIN) * span;
+                  if (level < 0.0f) level = 0.0f;
+                  if (level > span) level = span;
+                  depth_f = d_sensor - level;
+                }
+
+                // store last sample for sensors
+                id(step_debug_last_voltage)    = voltage;
+                id(step_debug_last_depth_unf)  = depth_unf;
+                id(step_debug_last_depth_f)    = depth_f;
+
+                int idx = id(step_debug_sample_index);
+
+                // append to JSON-like log
+                float t = idx * dt;
+                char buf[160];
+                snprintf(buf, sizeof(buf),
+                         "%s{\"t\":%.2f,\"v\":%.3f,\"d_unf\":%.3f,\"d_f\":%.3f}",
+                         (idx == 0) ? "" : ",",
+                         t, voltage, depth_unf, depth_f);
+                id(step_debug_log) += buf;
+
+                id(step_debug_sample_index)++;
+
+            - component.update: step_response_voltage_in
+            - component.update: step_response_depth_unfiltered
+            - component.update: step_response_depth_filtered
+            - delay: 500ms
+
+      #######################################
+      # Phase 2: step = 2 m drop for 10 s (20 samples)
+      #######################################
+      - repeat:
+          count: 20
+          then:
+            - lambda: |-
+                const float dt = ${sensor_update_sec};   // 0.5 s
+
+                // base from phase 1: 3.0 V -> current
+                float r = id(cfg_shunt_resistance_ohm).state;
+                if (isnan(r) || r < 1.0f) r = 165.0f;
+                float base_current = (3.0f / r) * 1000.0f; // mA
+
+                // slope m [m per mA] from calibration, default to 0.25 if invalid
+                float i1 = id(cfg_cal1_current_mA).state;
+                float i2 = id(cfg_cal2_current_mA).state;
+                float d1 = id(cfg_cal1_depth_m).state;
+                float d2 = id(cfg_cal2_depth_m).state;
+                float span = id(cfg_sensor_span_m).state;
+                float d_sensor = id(cfg_head_to_sensor).state;
+                if (isnan(span) || span <= 0.0f) span = 5.0f;
+
+                bool calib_valid = true;
+                if (isnan(i1) || isnan(i2) || isnan(d1) || isnan(d2)) calib_valid = false;
+                if (fabs(i2 - i1) < 0.1f) calib_valid = false;
+                if (fabs(d2 - d1) < 0.01f) calib_valid = false;
+
+                float m_depth_per_mA = 0.25f;
+                if (calib_valid) {
+                  m_depth_per_mA = (d2 - d1) / (i2 - i1);
+                  if (fabs(m_depth_per_mA) < 1e-3f) m_depth_per_mA = 0.25f;
+                }
+
+                // 2 m drop (shallower) => depth -2 m => current change -2/m
+                float delta_I = -2.0f / m_depth_per_mA;
+                float current = base_current + delta_I;
+
+                // convert back to voltage used for debug entity
+                float voltage = (current / 1000.0f) * r;
+
+                // depth_unf and depth_f same as above
+                float depth_unf;
+                if (calib_valid) {
+                  float m = (d2 - d1) / (i2 - i1);
+                  float b = d1 - m * i1;
+                  depth_unf = m * current + b;
+                } else {
+                  const float I_MIN = 4.0f;
+                  const float I_MAX = 20.0f;
+                  float level = (current - I_MIN) / (I_MAX - I_MIN) * span;
+                  if (level < 0.0f) level = 0.0f;
+                  if (level > span) level = span;
+                  depth_unf = d_sensor - level;
+                }
+
+                float window_s = id(cfg_filter_window_s).state;
+                if (isnan(window_s) || window_s < 1.0f) window_s = 1.0f;
+                float alpha = dt / window_s;
+                if (alpha > 1.0f) alpha = 1.0f;
+
+                id(step_debug_filtered_current) =
+                  id(step_debug_filtered_current) +
+                  alpha * (current - id(step_debug_filtered_current));
+
+                float depth_f;
+                float i = id(step_debug_filtered_current);
+                if (calib_valid) {
+                  float m = (d2 - d1) / (i2 - i1);
+                  float b = d1 - m * i1;
+                  depth_f = m * i + b;
+                } else {
+                  const float I_MIN = 4.0f;
+                  const float I_MAX = 20.0f;
+                  float level = (i - I_MIN) / (I_MAX - I_MIN) * span;
+                  if (level < 0.0f) level = 0.0f;
+                  if (level > span) level = span;
+                  depth_f = d_sensor - level;
+                }
+
+                id(step_debug_last_voltage)    = voltage;
+                id(step_debug_last_depth_unf)  = depth_unf;
+                id(step_debug_last_depth_f)    = depth_f;
+
+                int idx = id(step_debug_sample_index);
+
+                // capture deviations at 1/2/3 s after step start
+                // step starts after 4 samples (2 s) -> indices 4, then +2,4,6 => 6,8,10
+                if (idx == 6) id(step_debug_dev1) = depth_f - depth_unf;
+                if (idx == 8) id(step_debug_dev2) = depth_f - depth_unf;
+                if (idx == 10) id(step_debug_dev3) = depth_f - depth_unf;
+
+                float t = idx * dt;
+                char buf[160];
+                snprintf(buf, sizeof(buf),
+                         "%s{\"t\":%.2f,\"v\":%.3f,\"d_unf\":%.3f,\"d_f\":%.3f}",
+                         (idx == 0) ? "" : ",",
+                         t, voltage, depth_unf, depth_f);
+                id(step_debug_log) += buf;
+
+                id(step_debug_sample_index)++;
+
+            - component.update: step_response_voltage_in
+            - component.update: step_response_depth_unfiltered
+            - component.update: step_response_depth_filtered
+            - delay: 500ms
+
+      # close JSON-like array
+      - lambda: |-
+          id(step_debug_log) += "]";
+
+      # publish report to text entity
+      - text_sensor.template.publish:
+          id: step_response_report
+          state: !lambda 'return id(step_debug_log);'
+
+      # log both samples and simple analysis
+      - lambda: |-
+          ESP_LOGD("step_debug", "Step-response samples: %s", id(step_debug_log).c_str());
+          ESP_LOGD("step_debug",
+                   "Step-response analysis: dev_after_1s=%.3f m, 2s=%.3f m, 3s=%.3f m",
+                   id(step_debug_dev1), id(step_debug_dev2), id(step_debug_dev3));
+
+      - logger.log:
+          level: DEBUG
+          format: "Step-response debug finished"
+
+      - lambda: |-
+          id(step_debug_active) = false;
+
+      - deep_sleep.allow: main_deep_sleep
+
+      # resume normal operation
+      - script.execute: run_measurement_cycle
+
 
 # ============================================================
 # RELAY: High-side switch of 5 V feed to 24 V boost (controls sensor power)
@@ -238,6 +559,21 @@ switch:
     turn_off_action:
       - deep_sleep.allow: main_deep_sleep
 
+button:
+  - platform: template
+    name: "Trigger Step-response"
+    id: trigger_step_response
+    entity_category: diagnostic
+    on_press:
+      - script.execute: run_step_response_debug
+
+text_sensor:
+  - platform: template
+    id: step_response_report
+    name: "Step-response Report"
+    entity_category: diagnostic
+    update_interval: never
+
 # ============================================================
 # 1) CONFIGURATION ENTITIES
 # ============================================================
@@ -265,7 +601,7 @@ number:
     entity_category: config
     optimistic: true
     restore_value: true
-    initial_value: 165.0
+    initial_value: 150.0
     min_value: 10.0
     max_value: 1000.0
     step: 1.0
@@ -520,7 +856,7 @@ sensor:
     id: sensor_column_filtered_m
     name: "Sensor Column"
     unit_of_measurement: "m"
-    accuracy_decimals: 3
+    accuracy_decimals: 2
     icon: "mdi:waves"
     entity_category: diagnostic
     internal: true
@@ -553,7 +889,7 @@ sensor:
     unit_of_measurement: "m"
     device_class: distance
     state_class: measurement
-    accuracy_decimals: 3
+    accuracy_decimals: 2
     entity_category: diagnostic
     internal: true
     lambda: |-
@@ -617,7 +953,7 @@ sensor:
     unit_of_measurement: "m"
     device_class: distance
     state_class: measurement
-    accuracy_decimals: 3
+    accuracy_decimals: 2
     filters:
       - lambda: |-
           if (isnan(x)) return {};
@@ -634,7 +970,7 @@ sensor:
     unit_of_measurement: "m"
     device_class: distance
     state_class: measurement
-    accuracy_decimals: 3
+    accuracy_decimals: 2
     filters:
       - lambda: |-
           if (isnan(x)) return {};
@@ -658,7 +994,7 @@ sensor:
     unit_of_measurement: "m"
     device_class: distance
     state_class: measurement
-    accuracy_decimals: 3
+    accuracy_decimals: 2
     filters:
       - lambda: |-
           if (isnan(x)) return {};
@@ -680,7 +1016,7 @@ sensor:
     unit_of_measurement: "m"
     device_class: distance
     state_class: measurement
-    accuracy_decimals: 3
+    accuracy_decimals: 2
     filters:
       - lambda: |-
           if (isnan(x)) return {};
@@ -693,6 +1029,34 @@ sensor:
         return NAN;
       }
       return d_pump2 - depth_head;
+
+  # 2.10 step response entitites
+  - platform: template
+    id: step_response_voltage_in
+    name: "Step-response Voltage In"
+    unit_of_measurement: "V"
+    accuracy_decimals: 3
+    entity_category: diagnostic
+    lambda: |-
+      return id(step_debug_last_voltage);
+
+  - platform: template
+    id: step_response_depth_unfiltered
+    name: "Step-response Depth Unfiltered"
+    unit_of_measurement: "m"
+    accuracy_decimals: 3
+    entity_category: diagnostic
+    lambda: |-
+      return id(step_debug_last_depth_unf);
+
+  - platform: template
+    id: step_response_depth_filtered
+    name: "Step-response Depth Filtered"
+    unit_of_measurement: "m"
+    accuracy_decimals: 3
+    entity_category: diagnostic
+    lambda: |-
+      return id(step_debug_last_depth_f);
 
 binary_sensor:
   # Mirror HA input_boolean.prevent_deep_sleep
