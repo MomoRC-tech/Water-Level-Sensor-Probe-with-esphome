@@ -11,7 +11,6 @@ low long-term power drain.
 - [Software](#software)
 - [Configuration](#configuration)
 - [Diagnostics & Entities](#diagnostics--entities)
-- [Reference](#reference)
 - [License](#license)
 
 ---
@@ -128,20 +127,13 @@ Relay module: IN ← D5 (GPIO14), VCC ← 5V supply, GND ← MCU GND
 Optional: 100 nF–1 µF from measurement point to GND (analog low-pass)
 ```
 
+<p align="center">
+  <img src="schematic.PNG" alt="Basic schematic" width="600">
+</p>
+
 Series protection & filtering (now mandatory)
 - 1 kΩ series resistor before A0 (overvoltage & transient protection)  
 - 100 nF–1 µF capacitor measurement point → GND (noise reduction)
-
-Alternative wiring (low-side switching)
-- Relay opens the negative/ground path of the boost converter.
-- Pros: eliminates even the boost converter’s quiescent draw.
-- Cons: floating measurement node when open → requires pulldown + filtering, slightly higher risk of noise.
-
-Low-side additional parts
-- Add 470 kΩ–1 MΩ pulldown from measurement node to MCU GND.
-- Keep the same 1 kΩ series resistor and 100 nF–1 µF capacitor.
-
-Full diagrams are in [ASCII Wiring Diagrams](#ascii-wiring-diagrams).
 
 ---
 
@@ -422,26 +414,6 @@ Configuration numbers (prefix omitted in HA UI display name)
 - Sleep & dry detection:
   - `cfg_sleep_duration_min`
   - `cfg_dry_current_band_mA` (current threshold; loop current below this at publish ⇒ "below minimum")
-
----
-
-## Reference
-
-See full configuration: `waterlevel-sensor.yaml`.
-
-Filtering, calibration, sleep control, relay logic, dry detection, and step-response debug are
-implemented via template sensors, globals, scripts, and `deep_sleep.enter` in the main file.
-
-### ASCII Wiring Diagrams
-
-High-side wiring (default — switching 5 V feed to boost)
-
-<p align="center">
-  <img src="schematic.PNG" alt="Basic schematic" width="600">
-</p>
-
-Low-side wiring (alternative) — click to expand in the original repo if you keep the `<details>` wrapper.
-You can reuse the previous ASCII diagram; the logic here has not changed, only the firmware.
 
 ---
 
