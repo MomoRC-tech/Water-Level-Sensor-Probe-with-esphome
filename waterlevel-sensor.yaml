@@ -599,7 +599,7 @@ sensor:
 
       // Two-point calibration: d = m * i + b
       float m = (d2 - d1) / (i2 - i1);
-      float b = d1 - m * i;
+      float b = d1 - m * i1;
       float d = m * i + b;
 
       // Clamp to [d_sensor - span, d_sensor]
