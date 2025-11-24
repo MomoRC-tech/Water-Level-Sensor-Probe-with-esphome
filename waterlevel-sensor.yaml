@@ -1,4 +1,4 @@
-substitutions:
+,substitutions:
   devicename: welllevel
   friendly_name: "WellLevel"
   sensor_update_sec: "0.5"   # Measurement interval in seconds (2 Hz)
@@ -848,10 +848,10 @@ number:
     entity_category: config
     optimistic: true
     restore_value: true
-    initial_value: 4.0
+    initial_value: 3.0
     min_value: 1.0
-    max_value: 60.0
-    step: 1.0
+    max_value: 10.0
+    step: 0.5
     mode: BOX
 
   # Calibration point 1: depth at well head and corresponding loop current
