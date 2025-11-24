@@ -145,6 +145,76 @@ globals:
     restore_value: false
     initial_value: 'NAN'
 
+  # ### step-response metrics
+  - id: step_debug_d0_f
+    type: float
+    restore_value: false
+    initial_value: 'NAN'
+
+  - id: step_debug_step_amp_m
+    type: float
+    restore_value: false
+    initial_value: 'NAN'
+
+  - id: step_debug_t90_idx
+    type: int
+    restore_value: false
+    initial_value: '-1'
+
+  - id: step_debug_tsettle_idx
+    type: int
+    restore_value: false
+    initial_value: '-1'
+
+  - id: step_debug_settle_counter
+    type: int
+    restore_value: false
+    initial_value: '0'
+
+  # Welford stats for noise on plateau
+  - id: step_debug_noise_unf_n
+    type: float
+    restore_value: false
+    initial_value: '0'
+  - id: step_debug_noise_unf_mean
+    type: float
+    restore_value: false
+    initial_value: '0'
+  - id: step_debug_noise_unf_M2
+    type: float
+    restore_value: false
+    initial_value: '0'
+
+  - id: step_debug_noise_f_n
+    type: float
+    restore_value: false
+    initial_value: '0'
+  - id: step_debug_noise_f_mean
+    type: float
+    restore_value: false
+    initial_value: '0'
+  - id: step_debug_noise_f_M2
+    type: float
+    restore_value: false
+    initial_value: '0'
+
+  # scalar metrics for debug sensors
+  - id: step_debug_t90_s
+    type: float
+    restore_value: false
+    initial_value: 'NAN'
+
+  - id: step_debug_tsettle_s
+    type: float
+    restore_value: false
+    initial_value: 'NAN'
+
+  - id: step_debug_noise_factor
+    type: float
+    restore_value: false
+    initial_value: 'NAN'
+
+
 script:
   ##################################################################################################
   # One standardized measurement sequence, which is bypassed when step-response debug mode is active:
@@ -286,18 +356,33 @@ script:
       - lambda: |-
           id(step_debug_active) = true;
           id(step_debug_sample_index) = 0;
-          id(step_debug_log).clear();
-          id(step_debug_log).reserve(1024);
-          id(step_debug_log) = "[";
+          id(step_debug_log).clear();   // will later hold a compact metrics JSON
           id(step_debug_filter_initialized) = false;
           id(step_debug_dev1) = NAN;
           id(step_debug_dev2) = NAN;
           id(step_debug_dev3) = NAN;
 
+          // metrics init
+          id(step_debug_d0_f) = NAN;
+          id(step_debug_step_amp_m) = 2.0f;      // 2 m water-level drop -> depth +2 m
+          id(step_debug_t90_idx) = -1;
+          id(step_debug_tsettle_idx) = -1;
+          id(step_debug_settle_counter) = 0;
+          id(step_debug_noise_unf_n) = 0.0f;
+          id(step_debug_noise_unf_mean) = 0.0f;
+          id(step_debug_noise_unf_M2) = 0.0f;
+          id(step_debug_noise_f_n) = 0.0f;
+          id(step_debug_noise_f_mean) = 0.0f;
+          id(step_debug_noise_f_M2) = 0.0f;
+          id(step_debug_t90_s) = NAN;
+          id(step_debug_tsettle_s) = NAN;
+          id(step_debug_noise_factor) = NAN;
+
+
       - deep_sleep.prevent: main_deep_sleep
 
       #######################################
-      # Phase 1: 3.0 V for 2 s (4 samples)
+      # Phase 1: 3.0 V for 2s (4 samples)
       #######################################
       - repeat:
           count: 4
@@ -375,22 +460,25 @@ script:
                 id(step_debug_last_depth_f)    = depth_f;
 
                 int idx = id(step_debug_sample_index);
-
-                // append to JSON-like log
                 float t = idx * dt;
-                char buf[160];
-                snprintf(buf, sizeof(buf),
-                         "%s{\"t\":%.2f,\"v\":%.3f,\"d_unf\":%.3f,\"d_f\":%.3f}",
-                         (idx == 0) ? "" : ",",
+
+                // NDJSON-style per-sample log line
+                ESP_LOGD("step_debug",
+                         "{\"t\":%.2f,\"phase\":1,\"v\":%.3f,\"d_unf\":%.3f,\"d_f\":%.3f}",
                          t, voltage, depth_unf, depth_f);
-                id(step_debug_log) += buf;
 
                 id(step_debug_sample_index)++;
+
 
             - component.update: step_response_voltage_in
             - component.update: step_response_depth_unfiltered
             - component.update: step_response_depth_filtered
             - delay: 500ms
+
+      # after phase 1 (3.0 V) – use last filtered depth as baseline d0
+      - lambda: |-
+          id(step_debug_d0_f) = id(step_debug_last_depth_f);
+
 
       #######################################
       # Phase 2: step = 2 m drop for 10 s (20 samples)
@@ -426,8 +514,11 @@ script:
                   if (fabs(m_depth_per_mA) < 1e-3f) m_depth_per_mA = 0.25f;
                 }
 
-                // 2 m drop (shallower) => depth -2 m => current change -2/m
-                float delta_I = -2.0f / m_depth_per_mA;
+                // 2 m water-level drop:
+                // depth below wellhead increases by +2 m (surface goes 2 m deeper)
+                // => Δd = +2 m, so ΔI = Δd / m_depth_per_mA
+                float step_depth_delta_m = id(step_debug_step_amp_m);  // +2.0f
+                float delta_I = step_depth_delta_m / m_depth_per_mA;
                 float current = base_current + delta_I;
 
                 // convert back to voltage used for debug entity
@@ -478,6 +569,57 @@ script:
 
                 int idx = id(step_debug_sample_index);
 
+                // --- metrics: t90 and t_settle ---
+                float d0   = id(step_debug_d0_f);
+                float A    = id(step_debug_step_amp_m);   // e.g. +2.0 m (depth increase)
+                float absA = fabsf(A);
+
+                if (!isnan(d0) && absA > 0.0f) {
+                  // time to 90% of step
+                  if (id(step_debug_t90_idx) < 0) {
+                    if (fabsf(depth_f - d0) >= 0.9f * absA) {
+                      id(step_debug_t90_idx) = idx;
+                    }
+                  }
+
+                  // settling time: within 2% band for 4 consecutive samples
+                  float d_inf_target = d0 + A;  // final value
+                  if (fabsf(depth_f - d_inf_target) <= 0.02f * absA) {
+                    id(step_debug_settle_counter)++;
+                    if (id(step_debug_tsettle_idx) < 0 &&
+                        id(step_debug_settle_counter) >= 4) {
+                      id(step_debug_tsettle_idx) = idx;
+                    }
+                  } else {
+                    id(step_debug_settle_counter) = 0;
+                  }
+                }
+
+                // --- metrics: noise reduction on plateau using Welford ---
+                // treat last half of step phase as "plateau"
+                const int plateau_start = 4 + 10;  // idx >= 14 (2 s pre + 5 s transient)
+                if (idx >= plateau_start) {
+                  // unfiltered
+                  float n = id(step_debug_noise_unf_n) + 1.0f;
+                  float delta = depth_unf - id(step_debug_noise_unf_mean);
+                  float mean = id(step_debug_noise_unf_mean) + delta / n;
+                  float delta2 = depth_unf - mean;
+                  float M2 = id(step_debug_noise_unf_M2) + delta * delta2;
+                  id(step_debug_noise_unf_n) = n;
+                  id(step_debug_noise_unf_mean) = mean;
+                  id(step_debug_noise_unf_M2) = M2;
+
+                  // filtered
+                  n = id(step_debug_noise_f_n) + 1.0f;
+                  delta = depth_f - id(step_debug_noise_f_mean);
+                  mean = id(step_debug_noise_f_mean) + delta / n;
+                  delta2 = depth_f - mean;
+                  M2 = id(step_debug_noise_f_M2) + delta * delta2;
+                  id(step_debug_noise_f_n) = n;
+                  id(step_debug_noise_f_mean) = mean;
+                  id(step_debug_noise_f_M2) = M2;
+                }
+
                 // capture deviations at 1/2/3 s after step start
                 // step starts after 4 samples (2 s) -> indices 4, then +2,4,6 => 6,8,10
                 if (idx == 6) id(step_debug_dev1) = depth_f - depth_unf;
@@ -485,35 +627,70 @@ script:
                 if (idx == 10) id(step_debug_dev3) = depth_f - depth_unf;
 
                 float t = idx * dt;
-                char buf[160];
-                snprintf(buf, sizeof(buf),
-                         "%s{\"t\":%.2f,\"v\":%.3f,\"d_unf\":%.3f,\"d_f\":%.3f}",
-                         (idx == 0) ? "" : ",",
+                ESP_LOGD("step_debug",
+                         "{\"t\":%.2f,\"phase\":2,\"v\":%.3f,\"d_unf\":%.3f,\"d_f\":%.3f}",
                          t, voltage, depth_unf, depth_f);
-                id(step_debug_log) += buf;
 
                 id(step_debug_sample_index)++;
+
 
             - component.update: step_response_voltage_in
             - component.update: step_response_depth_unfiltered
             - component.update: step_response_depth_filtered
             - delay: 500ms
 
-      # close JSON-like array
       - lambda: |-
-          id(step_debug_log) += "]";
+          const float dt = ${sensor_update_sec};
 
-      # publish report to text entity
+          // derive scalar metrics into globals
+          if (id(step_debug_t90_idx) >= 0) {
+            id(step_debug_t90_s) = id(step_debug_t90_idx) * dt;
+          } else {
+            id(step_debug_t90_s) = NAN;
+          }
+
+          if (id(step_debug_tsettle_idx) >= 0) {
+            id(step_debug_tsettle_s) = id(step_debug_tsettle_idx) * dt;
+          } else {
+            id(step_debug_tsettle_s) = NAN;
+          }
+
+          if (id(step_debug_noise_unf_n) > 1.0f &&
+              id(step_debug_noise_f_n) > 1.0f) {
+            float var_unf = id(step_debug_noise_unf_M2) /
+                            (id(step_debug_noise_unf_n) - 1.0f);
+            float var_f   = id(step_debug_noise_f_M2) /
+                            (id(step_debug_noise_f_n) - 1.0f);
+            if (var_unf > 0.0f && var_f > 0.0f) {
+              id(step_debug_noise_factor) = sqrtf(var_unf / var_f);
+            } else {
+              id(step_debug_noise_factor) = NAN;
+            }
+          } else {
+            id(step_debug_noise_factor) = NAN;
+          }
+
+          // build compact metrics JSON into step_debug_log
+          char buf[200];
+          snprintf(buf, sizeof(buf),
+                   "{\"t90_s\":%.2f,\"t_settle_s\":%.2f,"
+                   "\"noise_reduction\":%.2f,"
+                   "\"dev1_m\":%.3f,\"dev2_m\":%.3f,\"dev3_m\":%.3f}",
+                   id(step_debug_t90_s),
+                   id(step_debug_tsettle_s),
+                   id(step_debug_noise_factor),
+                   id(step_debug_dev1),
+                   id(step_debug_dev2),
+                   id(step_debug_dev3));
+          id(step_debug_log) = buf;
+
+          ESP_LOGD("step_debug", "Step-response metrics: %s",
+                   id(step_debug_log).c_str());
+
+      # publish compact metrics JSON to text entity
       - text_sensor.template.publish:
           id: step_response_report
           state: !lambda 'return id(step_debug_log);'
-
-      # log both samples and simple analysis
-      - lambda: |-
-          ESP_LOGD("step_debug", "Step-response samples: %s", id(step_debug_log).c_str());
-          ESP_LOGD("step_debug",
-                   "Step-response analysis: dev_after_1s=%.3f m, 2s=%.3f m, 3s=%.3f m",
-                   id(step_debug_dev1), id(step_debug_dev2), id(step_debug_dev3));
 
       - logger.log:
           level: DEBUG
@@ -685,9 +862,9 @@ number:
     entity_category: config
     optimistic: true
     restore_value: true
-    initial_value: 2.0
+    initial_value: 4.80
     min_value: 0.0
-    max_value: 50.0
+    max_value: 20.0
     step: 0.01
     mode: BOX
 
@@ -698,9 +875,9 @@ number:
     entity_category: config
     optimistic: true
     restore_value: true
-    initial_value: 8.0
+    initial_value: 4.35
     min_value: 0.0
-    max_value: 50.0
+    max_value: 25.0
     step: 0.01
     mode: BOX
 
@@ -712,9 +889,9 @@ number:
     entity_category: config
     optimistic: true
     restore_value: true
-    initial_value: 4.0
+    initial_value: 0.0
     min_value: 0.0
-    max_value: 50.0
+    max_value: 20.0
     step: 0.01
     mode: BOX
 
@@ -725,9 +902,9 @@ number:
     entity_category: config
     optimistic: true
     restore_value: true
-    initial_value: 16.0
+    initial_value: 20.0
     min_value: 0.0
-    max_value: 50.0
+    max_value: 25.0
     step: 0.01
     mode: BOX
 
@@ -1057,6 +1234,61 @@ sensor:
     entity_category: diagnostic
     lambda: |-
       return id(step_debug_last_depth_f);
+
+  # 2.11 Step-response metrics as sensors for HA charts
+  - platform: template
+    id: step_response_t90_s
+    name: "Step-response t90"
+    unit_of_measurement: "s"
+    accuracy_decimals: 2
+    entity_category: diagnostic
+    lambda: |-
+      return id(step_debug_t90_s);
+
+  - platform: template
+    id: step_response_t_settle_s
+    name: "Step-response t_settle"
+    unit_of_measurement: "s"
+    accuracy_decimals: 2
+    entity_category: diagnostic
+    lambda: |-
+      return id(step_debug_tsettle_s);
+
+  - platform: template
+    id: step_response_noise_reduction
+    name: "Step-response Noise Reduction"
+    unit_of_measurement: "x"
+    accuracy_decimals: 2
+    entity_category: diagnostic
+    lambda: |-
+      return id(step_debug_noise_factor);
+
+  - platform: template
+    id: step_response_dev1
+    name: "Step-response Deviation 1s"
+    unit_of_measurement: "m"
+    accuracy_decimals: 3
+    entity_category: diagnostic
+    lambda: |-
+      return id(step_debug_dev1);
+
+  - platform: template
+    id: step_response_dev2
+    name: "Step-response Deviation 2s"
+    unit_of_measurement: "m"
+    accuracy_decimals: 3
+    entity_category: diagnostic
+    lambda: |-
+      return id(step_debug_dev2);
+
+  - platform: template
+    id: step_response_dev3
+    name: "Step-response Deviation 3s"
+    unit_of_measurement: "m"
+    accuracy_decimals: 3
+    entity_category: diagnostic
+    lambda: |-
+      return id(step_debug_dev3);
 
 binary_sensor:
   # Mirror HA input_boolean.prevent_deep_sleep
